@@ -2,7 +2,11 @@
   <div class="flex h-screen bg-gray-50 font-sans text-gray-800">
     <div class="w-1/2 p-4 border-r border-gray-200 flex flex-col">
       <h2 class="text-xl font-semibold mb-4 text-gray-700">Markdown Input</h2>
-      <TaskInputEditor class="flex-grow min-h-0" @update:markdown="handleMarkdownUpdate" />
+      <TaskInputEditor
+        ref="taskInputEditorRef"
+        class="flex-grow min-h-0"
+        @update:markdown="handleMarkdownUpdate"
+      />
       <div class="mt-4 p-2 rounded" :class="errorClass">
         <p v-if="errors.length === 0" class="text-green-800">No parsing errors or warnings.</p>
         <div v-else>
@@ -28,13 +32,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import TaskInputEditor from './components/TaskInputEditor.vue';
 import TaskVisualizationCanvas from './components/TaskVisualizationCanvas.vue';
 import { parseMarkdown } from './utils/parser.js';
-import { scheduleTasks } from './utils/scheduler.js'; // Import our new scheduler
+import { scheduleTasks } from './utils/scheduler.js';
 
-// Reactive variable to hold the parsed data from markdown
+// --- REFS ---
+const taskInputEditorRef = ref(null); // Ref to TaskInputEditor component
+
 const parsedData = ref({
   tasks: [],
   dependencies: [],
@@ -43,13 +49,10 @@ const parsedData = ref({
   taskGroups: [],
 });
 
-// Reactive variable to hold the final scheduled tasks (with start/end times)
 const scheduledTasks = ref([]);
-
-// Reactive variable to hold parsing and scheduling errors
 const errors = ref([]);
 
-// Computed property for dynamic error message box styling
+// --- COMPUTED PROPERTIES ---
 const errorClass = computed(() => {
   const hasErrors = errors.value.some(e => e.type === 'error');
   const hasWarnings = errors.value.some(e => e.type === 'warning');
@@ -63,27 +66,24 @@ const errorClass = computed(() => {
   }
 });
 
-// Handler for when the markdown input updates
+// --- METHODS ---
 const handleMarkdownUpdate = (markdown) => {
   const parseResult = parseMarkdown(markdown);
+  const parsedTasks = Array.isArray(parseResult.tasks) ? parseResult.tasks : [];
+
   parsedData.value = {
-    tasks: parseResult.tasks,
+    tasks: parsedTasks,
     dependencies: parseResult.dependencies,
     durationLabels: parseResult.durationLabels,
     globalBandwidth: parseResult.globalBandwidth,
     taskGroups: parseResult.taskGroups,
   };
 
-  // Combine parser errors and potential scheduler errors
-  const currentErrors = [...parseResult.errors]; // Start with parser errors
+  const currentErrors = [...parseResult.errors];
 
   if (parseResult.errors.filter(e => e.type === 'error').length > 0) {
-      // If there are parsing errors, don't attempt to schedule
       scheduledTasks.value = [];
-      errors.value = currentErrors;
-      console.log('Skipping scheduling due to parsing errors.');
   } else {
-      // Proceed to scheduling only if parsing was successful
       const scheduleResult = scheduleTasks(
           parsedData.value.tasks,
           parsedData.value.dependencies,
@@ -92,32 +92,38 @@ const handleMarkdownUpdate = (markdown) => {
       );
 
       scheduledTasks.value = scheduleResult.scheduledTasks;
-      currentErrors.push(...scheduleResult.errors); // Add scheduler errors
-
-      errors.value = currentErrors; // Update the errors ref for UI
+      currentErrors.push(...scheduleResult.errors);
   }
 
-  console.log('Parsed Data:', parsedData.value);
-  console.log('Scheduled Tasks:', scheduledTasks.value);
-  console.log('All Errors:', errors.value);
+  errors.value = currentErrors; // Update the errors ref for UI and editor linting
 };
 
-// Trigger initial parse on component mount with default content
-onMounted(() => {
-  const initialMarkdown = `Task "Develop UI" "Implement frontend" "M" "Code Backend"
-Task "Code Backend" "Develop API and DB" "L"
-Task "Write Docs" "Prepare user documentation" "S" "Develop UI"
-Task "Deploy Backend" "Set up server infrastructure" "XL" "Code Backend"
-Task "Test Integration" "Ensure systems work together" "M" "Develop UI, Deploy Backend"
 
-Global Bandwidth: 2
-L:10
-M:5
-S:2
-XL:15
-`;
-  handleMarkdownUpdate(initialMarkdown);
+// --- LIFECYCLE HOOKS ---
+onMounted(() => {
+  // TaskInputEditor will now directly set its initial doc and emit 'update:markdown'.
+  // This ensures the editor is the single source of truth for the document.
+  // We remove the manual trigger here.
 });
+
+
+// --- WATCHERS ---
+// Watch parsedData.tasks to send updated task names to the editor
+watch(() => parsedData.value.tasks, (newTasks) => {
+  if (taskInputEditorRef.value) {
+    // THIS IS THE IMPORTANT CHANGE:
+    // Ensure we only map to valid task names (strings) before sending to editor
+    const taskNames = newTasks.map(task => task.name).filter(name => typeof name === 'string' && name.length > 0);
+    taskInputEditorRef.value.setAvailableTaskNames(taskNames);
+  }
+}, { immediate: true, deep: true }); // immediate: true to send initial tasks
+
+// Watch errors to send them to the editor for linting
+watch(() => errors.value, (newErrors) => {
+  if (taskInputEditorRef.value) {
+    taskInputEditorRef.value.setLintDiagnostics(newErrors);
+  }
+}, { immediate: true, deep: true });
 </script>
 
 <style>
