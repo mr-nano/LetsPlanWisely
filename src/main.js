@@ -1,6 +1,11 @@
-import './assets/main.css' // <-- Make sure this line is present and correct
+import './assets/main.css'
 
 import { createApp } from 'vue'
 import App from './App.vue'
 
-createApp(App).mount('#app')
+// Import and register VueKonva components globally
+import VueKonva from 'vue-konva';
+
+const app = createApp(App);
+app.use(VueKonva); // Use the VueKonva plugin
+app.mount('#app');
