@@ -68,7 +68,10 @@ const errorClass = computed(() => {
 
 // --- METHODS ---
 const handleMarkdownUpdate = (markdown) => {
+  console.log('handleMarkdownUpdate called with markdown:', markdown); // <-- ADD THIS LOG
   const parseResult = parseMarkdown(markdown);
+  console.log('Parser Result:', parseResult); // <-- ADD THIS LOG
+  
   const parsedTasks = Array.isArray(parseResult.tasks) ? parseResult.tasks : [];
 
   parsedData.value = {
@@ -101,10 +104,22 @@ const handleMarkdownUpdate = (markdown) => {
 
 // --- LIFECYCLE HOOKS ---
 onMounted(() => {
-  // TaskInputEditor will now directly set its initial doc and emit 'update:markdown'.
-  // This ensures the editor is the single source of truth for the document.
-  // We remove the manual trigger here.
+  // Manual trigger for initial content parsing (safe fallback)
+  const initialMarkdown = `Task "Develop UI" "Implement frontend" "M" "Code Backend"
+Task "Code Backend" "Develop API and DB" "L"
+Task "Write Docs" "Prepare user documentation" "S" "Develop UI"
+Task "Deploy Backend" "Set up server infrastructure" "XL" "Code Backend"
+Task "Test Integration" "Ensure systems work together" "M" "Develop UI, Deploy Backend"
+
+Global Bandwidth: 2
+L:10
+M:5
+S:2
+XL:15
+`;
+  handleMarkdownUpdate(initialMarkdown); // This explicitly calls the handler on App.vue mount
 });
+
 
 
 // --- WATCHERS ---

@@ -9,13 +9,14 @@ import { ref, onMounted, onUnmounted, watch, defineEmits, defineExpose } from 'v
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { basicSetup } from '@codemirror/basic-setup';
-import { autocompletion } from '@codemirror/autocomplete';
-import { lintGutter, linter, setDiagnostics } from '@codemirror/lint'; // <--- Ensure 'linter' is here
-import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
-import { tags } from '@lezer/highlight';
+import { autocompletion, CompletionContext } from '@codemirror/autocomplete'; // CompletionContext is a type, not a runtime value, but sometimes helps with type checking
+import { lintGutter, linter, setDiagnostics } from '@codemirror/lint';
+// Custom syntax highlighting is currently disabled as per previous commit.
+// import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+// import { tags } from '@lezer/highlight';
 
 // --- PROPS & EMITS ---
-const emit = defineEmits(['update:markdown']); // No longer needs 'request:taskNames' directly
+const emit = defineEmits(['update:markdown']);
 
 // --- REFS ---
 const editorContainer = ref(null);
@@ -37,119 +38,95 @@ S:2
 XL:15
 `;
 
-// --- CodeMirror Extensions ---
+// --- CodeMirror Extensions (Custom Highlighting is REMOVED/COMMENTED OUT for now) ---
 
-// 1. Custom Syntax Highlighting (Simplified Example)
-// This will just highlight "Task", "Global Bandwidth", "Task Group", and quotes.
-// A more advanced tokenizer could be built using `@codemirror/language`'s StreamLanguage
-// or Lezer parser for full grammar parsing. For now, this highlights keywords.
-const myHighlightStyle = HighlightStyle.define([
-  { tag: tags.keyword, color: '#9d52d9' }, // Purple for keywords
-  { tag: tags.string, color: '#32a852' },  // Green for strings (quoted text)
-  { tag: tags.number, color: '#eb872a' }, // Orange for numbers
-  { tag: tags.comment, color: '#888888', fontStyle: 'italic' }, // Gray for comments
-]);
-
-const customLanguageSupport = [
-  syntaxHighlighting(myHighlightStyle),
-  EditorState.transactionExtender.of(tr => {
-    if (tr.docChanged) {
-      // Basic detection for highlighting keywords
-      const doc = tr.newDoc;
-      const changes = [];
-      const keywords = ["Task", "Global Bandwidth", "Task Group", "bandwidth", "unbound", "depends on", "should happen before", "should happen after"];
-      const durationLabels = ["XS", "S", "M", "L", "XL", "XXL"];
-
-      doc.iterLines(line => {
-        const lineText = line.text;
-        keywords.forEach(keyword => {
-          let lastIndex = -1;
-          while ((lastIndex = lineText.indexOf(keyword, lastIndex + 1)) !== -1) {
-            changes.push({ from: line.from + lastIndex, to: line.from + lastIndex + keyword.length, type: tags.keyword });
-          }
-        });
-        durationLabels.forEach(label => {
-            let lastIndex = -1;
-            while ((lastIndex = lineText.indexOf(label, lastIndex + 1)) !== -1) {
-                // Check if it's likely a standalone label (e.g., 'S') and not part of another word
-                if ((lastIndex === 0 || /\s/.test(lineText[lastIndex - 1])) &&
-                    (lastIndex + label.length === lineText.length || /\s/.test(lineText[lastIndex + label.length]) || lineText[lastIndex + label.length] === ':')) {
-                    changes.push({ from: line.from + lastIndex, to: line.from + lastIndex + label.length, type: tags.keyword }); // Or a custom tag for duration labels
-                }
-            }
-        });
-        // Highlight quoted strings
-        const stringMatches = lineText.matchAll(/"([^"]*)"/g);
-        for (const match of stringMatches) {
-            changes.push({ from: line.from + match.index, to: line.from + match.index + match[0].length, type: tags.string });
-        }
-        // Highlight comments
-        let commentIndex = lineText.indexOf('//');
-        if (commentIndex === -1) commentIndex = lineText.indexOf('#');
-        if (commentIndex !== -1) {
-            changes.push({ from: line.from + commentIndex, to: line.from + lineText.length, type: tags.comment });
-        }
-      });
-      return EditorState.changeByRange(changes);
-    }
-    return null;
-  })
-];
-
-
-// 2. Autocomplete Source
+// Autocomplete Source
 const predefinedDurationLabels = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
 
-// TaskInputEditor.vue, around line 63
-const myCompletion = (context) => {
-  let word = context.matchBefore(/[\w"]*/);
-  if (!word || !word.from && word.from !== 0) return null; // Ensure word is valid. `word.from` can be 0.
+// New: Snippet for Task definition
+const taskSnippet = `Task "$NAME$" "$DESCRIPTION$" "$DURATION$" "$DEPENDENCIES$"`; // Use placeholders
+// Define the completion effect for a snippet
+import { snippetCompletion } from "@codemirror/autocomplete"; // REMOVE 'syntaxTree'
 
-  const line = context.state.doc.lineAt(context.pos).text;
-  const lineBefore = line.substring(0, context.pos - context.state.doc.lineAt(context.pos).from);
+const myCompletion = (context) => {
+  const word = context.matchBefore(/\w*/); // Match any word characters
+  if (!word.from) return null; // No word to complete
+
+  const line = context.state.doc.lineAt(context.pos);
+  const lineText = line.text;
+  const lineBeforeCursor = lineText.substring(0, context.pos - line.from);
 
   let options = [];
 
-  const openQuoteIndex = lineBefore.lastIndexOf('"');
-  const closeQuoteIndex = lineBefore.indexOf('"', openQuoteIndex + 1);
-  const isInsideQuote = openQuoteIndex !== -1 && (closeQuoteIndex === -1 || context.pos <= closeQuoteIndex + context.state.doc.lineAt(context.pos).from);
+  // --- Context-Specific Autocomplete Logic ---
 
-  if (isInsideQuote) {
-    // Ensure `availableTaskNames` contains only strings before mapping
-    options = availableTaskNames
-      .filter(name => typeof name === 'string' && name.length > 0) // <--- Add this filter here
-      .map(name => ({ label: name, type: 'variable' }));
-  } else {
-    const taskDurationMatch = lineBefore.match(/^Task\s+"[^"]*"(?:\s+"[^"]*")?\s+"(\w*)$/);
-    if (taskDurationMatch) {
-      // predefinedDurationLabels are constants, so they should be fine, but filter anyway for consistency
-      options = predefinedDurationLabels
-        .filter(label => typeof label === 'string' && label.length > 0) // <--- Add this filter here
-        .map(label => ({ label: label, type: 'keyword' }));
-    }
+  // 1. Suggest 'Task' snippet if at the start of a line or after a blank line
+  if (lineBeforeCursor.trim() === 'Task' && lineBeforeCursor.length === 'Task'.length) {
+    return {
+      from: word.from,
+      options: [
+        snippetCompletion(taskSnippet, {
+          label: "Task (full definition)",
+          info: "Define a new task with name, description, duration, and dependencies.",
+          type: "keyword"
+        })
+      ]
+    };
   }
 
-  // This is line 63:
-  const filteredOptions = options.filter(option =>
-    // Ensure option and option.label are not undefined before calling toLowerCase()
-    option && typeof option.label === 'string' && option.label.toLowerCase().startsWith(word.text.toLowerCase())
-  );
 
-  return {
-    from: word.from,
-    options: filteredOptions,
-    validFor: /[\w"]*/,
-  };
+  // 2. Autocomplete for Task Names (inside quotes)
+  // Check if cursor is inside a quoted string. This is a heuristic.
+  const regexInQuote = /"[^"]*$/; // Matches an open quote followed by any non-quote chars to end of string
+  const matchInQuote = lineBeforeCursor.match(regexInQuote);
+
+  if (matchInQuote) {
+    const textInQuote = matchInQuote[0].substring(1); // Get content after the opening quote
+    options = availableTaskNames
+      .filter(name => typeof name === 'string' && name.length > 0 && name.toLowerCase().startsWith(textInQuote.toLowerCase()))
+      .map(name => ({ label: name, type: 'variable', apply: `"${name}"` })); // Apply with quotes for seamless replacement
+      // If we are inside an already existing quoted string (e.g. "Task "My Task" "Desc" "Dur" "Depen^cies""),
+      // the `apply` will be crucial to replace just the portion inside quotes.
+      // `apply` can also be a function, but for simple strings, it replaces `word.text`.
+      // We will adjust the `from` property to ensure the replacement covers the text *inside* the quotes.
+    const quoteStartPos = line.from + lineBeforeCursor.lastIndexOf('"') + 1;
+    return {
+      from: quoteStartPos, // Start completion from after the opening quote
+      options: options,
+      validFor: /[^"]*/ // Valid for any character until a closing quote
+    };
+  }
+
+
+  // 3. Autocomplete for Duration Labels
+  // Check if it's a "Task ... " duration field
+  // This regex targets the *last* quoted string field in a "Task" definition that's incomplete
+  const taskDurationMatch = lineBeforeCursor.match(/^Task\s+"[^"]*"(?:\s+"[^"]*")?\s+"(\w*)$/);
+  if (taskDurationMatch) {
+    const potentialDuration = taskDurationMatch[1]; // What the user has typed for duration
+    options = predefinedDurationLabels
+      .filter(label => label.toLowerCase().startsWith(potentialDuration.toLowerCase()))
+      .map(label => ({ label: label, type: 'keyword' }));
+
+    return {
+      from: line.from + lineBeforeCursor.lastIndexOf('"') + 1 + potentialDuration.length - word.text.length, // Adjust 'from' for duration
+      options: options,
+      validFor: /\w*/ // Valid for word characters
+    };
+  }
+
+  // Default: no completion
+  return null;
 };
 
 
-// 3. Linting Source (for displaying errors from App.vue)
+// Linting Source (for displaying errors from App.vue)
 let currentDiagnostics = [];
 const lintSource = (view) => {
   return currentDiagnostics.map(diag => ({
-    from: diag.from || 0, // Placeholder, ideally parser would give precise range
-    to: diag.to || diag.from || view.state.doc.length, // Placeholder
-    severity: diag.type, // 'error' or 'warning'
+    from: diag.from || 0,
+    to: diag.to || diag.from || view.state.doc.length,
+    severity: diag.type,
     message: diag.message,
   }));
 };
@@ -161,10 +138,10 @@ onMounted(() => {
       doc: initialMarkdown,
       extensions: [
         basicSetup,
-//        customLanguageSupport,
+        // customLanguageSupport, // STILL DISABLED
         autocompletion({ override: [myCompletion] }),
-        lintGutter(), // This provides the gutter visuals
-        linterCompartment.of(linter(lintSource)), // <--- This is the crucial change
+        lintGutter(),
+        linterCompartment.of(linter(lintSource)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             emit('update:markdown', update.state.doc.toString());
@@ -176,50 +153,43 @@ onMounted(() => {
   });
 });
 
-onUnmounted(() => {
+onUnmounted(() => { // Corrected: onUnmounted
   if (view) {
     view.destroy();
   }
 });
 
 // --- EXPOSED METHODS ---
-// Method to set available task names from parent (App.vue)
-// Method to receive task names from the parent
-// TaskInputEditor.vue
-// Method to receive task names from the parent
 const setAvailableTaskNames = (names) => {
-  // Ensure names is an array and filter out any non-string or empty values
   availableTaskNames = Array.isArray(names) ? names.filter(name => typeof name === 'string' && name.length > 0) : [];
 };
 
-// Method to update linting diagnostics from parent (App.vue)
 const setLintDiagnostics = (errors) => {
   currentDiagnostics = errors.map(err => {
     let from = 0;
     let to = view ? view.state.doc.length : 0;
 
-    if (err.line !== 'N/A' && view) {
+    if (err.line !== 'N/A' && view && err.line >= 1 && err.line <= view.state.doc.lines) {
       try {
         const lineObj = view.state.doc.line(err.line);
         from = lineObj.from;
         to = lineObj.to;
       } catch (e) {
-        // Fallback if line number is out of bounds or other issue
-        from = 0;
-        to = view.state.doc.length;
+        console.warn("Could not map error line to CodeMirror range:", err, e);
+        from = 0; // Fallback to start
+        to = view.state.doc.length; // Fallback to end
       }
     }
 
     return {
       from: from,
       to: to,
-      severity: err.type, // 'error' or 'warning'
+      severity: err.type,
       message: err.message,
     };
   });
 
   if (view) {
-    // This is where we dispatch an update to the linter extension's field
     view.dispatch({
       effects: linterCompartment.reconfigure(linter(lintSource))
     });
