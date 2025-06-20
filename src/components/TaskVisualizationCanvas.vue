@@ -12,17 +12,15 @@ let stage = null; // Will hold Konva.Stage or Pixi.Application instance
 
 // This component will receive parsed task data from App.vue
 const props = defineProps({
-  tasks: {
-    type: Array,
-    default: () => []
-  },
-  dependencies: {
-    type: Array,
-    default: () => []
-  },
-  schedule: { // This will be the output from your scheduling engine
-    type: Array,
-    default: () => []
+  parsedData: { // New prop to receive all parsed data
+    type: Object,
+    default: () => ({
+      tasks: [],
+      dependencies: [],
+      durationLabels: {},
+      globalBandwidth: 'unbound',
+      taskGroups: [],
+    })
   },
   errors: {
     type: Array,
@@ -32,41 +30,9 @@ const props = defineProps({
 
 onMounted(() => {
   // Placeholder for Konva.js or PixiJS initialization
-  // console.log('Canvas container mounted:', canvasContainer.value);
-  // Example Konva.js initialization (conceptual):
-  /*
-  import Konva from 'konva';
-  stage = new Konva.Stage({
-    container: canvasContainer.value,
-    width: canvasContainer.value.offsetWidth,
-    height: canvasContainer.value.offsetHeight,
-  });
-  const layer = new Konva.Layer();
-  stage.add(layer);
-
-  // Add a simple rectangle to test
-  const rect = new Konva.Rect({
-    x: 50,
-    y: 50,
-    width: 100,
-    height: 50,
-    fill: 'green',
-    stroke: 'black',
-    strokeWidth: 2,
-  });
-  layer.add(rect);
-  layer.draw();
-
-  // Add resize listener for responsive canvas
-  const resizeObserver = new ResizeObserver(() => {
-    if (stage) {
-      stage.width(canvasContainer.value.offsetWidth);
-      stage.height(canvasContainer.value.offsetHeight);
-      stage.draw();
-    }
-  });
-  resizeObserver.observe(canvasContainer.value);
-  */
+  console.log('Canvas container mounted:', canvasContainer.value);
+  // Initial render based on initial props
+  renderVisualization(props.parsedData, props.errors);
 });
 
 onUnmounted(() => {
@@ -76,16 +42,20 @@ onUnmounted(() => {
   }
 });
 
-// Watch for changes in the 'schedule' prop to re-render the visualization
-watch(() => props.schedule, (newSchedule) => {
-  // console.log('Schedule updated, rendering visualization:', newSchedule);
-  // Logic to clear existing drawings and draw new schedule
-  // This is where your visualization logic based on Konva/Pixi will go
-});
+// Function to handle rendering (will be filled with Konva/Pixi logic later)
+const renderVisualization = (data, errs) => {
+  console.log('Visualization received parsed data:', data);
+  console.log('Visualization received errors:', errs);
+  // This is where your Konva.js/PixiJS rendering logic will go.
+  // For now, it just logs.
+};
 
-// Also watch for errors to potentially highlight problematic tasks
+// Watch for changes in parsedData or errors to re-render the visualization
+watch(() => props.parsedData, (newData) => {
+  renderVisualization(newData, props.errors);
+}, { deep: true }); // Use deep watch for objects
+
 watch(() => props.errors, (newErrors) => {
-  // console.log('Errors updated:', newErrors);
-  // Logic to visually indicate errors (e.g., highlight tasks in red)
+  renderVisualization(props.parsedData, newErrors);
 });
 </script>
