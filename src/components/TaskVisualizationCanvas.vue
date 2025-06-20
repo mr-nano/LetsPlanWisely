@@ -38,16 +38,18 @@ const position = ref({ x: 0, y: 0 }); // For pan
 // --- CONFIGURATION CONSTANTS (Adjust these for aesthetics) ---
 const TASK_HEIGHT = 40;
 const TASK_VERTICAL_PADDING = 15; // Vertical space between task lanes
-const TIME_UNIT_WIDTH = 20; // Pixels per abstract time unit
+const TIME_UNIT_WIDTH = 20; // Pixels per abstract time unit (e.g., 20px per unit of duration)
 const START_OFFSET_X = 20; // Initial horizontal offset for the first task
 const START_OFFSET_Y = 20; // Initial vertical offset for the first task
-const TEXT_PADDING_X = 5; // Padding for text inside task box
+const TEXT_PADDING_X = 8; // Horizontal padding for text inside task box
+const FONT_SIZE = 12; // Base font size for task text
 
 const TASK_FILL_COLOR = '#4299e1'; // Blue-500
 const TASK_STROKE_COLOR = '#2b6cb0'; // Blue-700
 const ERROR_FILL_COLOR = '#ef4444'; // Red-500
 const ERROR_STROKE_COLOR = '#b91c1c'; // Red-700
 const TEXT_COLOR = '#ffffff'; // White for task text
+const FONT_FAMILY = 'Arial, sans-serif'; // Use a common sans-serif font
 
 // --- COMPUTED PROPERTIES ---
 
@@ -71,7 +73,7 @@ const stageConfig = computed(() => {
 const hasError = (taskName) => {
   return props.errors.some(error =>
     error.type === 'error' &&
-    (error.message.includes(`"${taskName}"`) || error.message.includes(`"${taskName}"`)) // Basic check
+    (error.message.includes(`"${taskName}"`) || error.message.includes(`"${taskName}"`)) // Basic check for task name in error message
   );
 };
 
@@ -86,6 +88,7 @@ const tasksWithLayout = computed(() => {
   if (tasks.length === 0) return [];
 
   // Sort tasks primarily by start time, then by end time (shorter ones first, to fill gaps)
+  // This sort helps the lane assignment algorithm find better fits.
   tasks.sort((a, b) => {
     if (a.startTime !== b.startTime) {
       return a.startTime - b.startTime;
@@ -123,8 +126,15 @@ const tasksWithLayout = computed(() => {
       lanes.push([]);
     }
 
-    // Add task to the assigned lane
-    lanes[assignedLaneIndex].push(task);
+    // Add task to the assigned lane, keeping it sorted by start time
+    // This is important for subsequent tasks checking for conflicts in this lane
+    const insertIndex = lanes[assignedLaneIndex].findIndex(t => t.startTime > task.startTime);
+    if (insertIndex === -1) {
+      lanes[assignedLaneIndex].push(task);
+    } else {
+      lanes[assignedLaneIndex].splice(insertIndex, 0, task);
+    }
+
 
     // Calculate layout properties
     const x = START_OFFSET_X + task.startTime * TIME_UNIT_WIDTH;
@@ -167,33 +177,49 @@ const getTaskRectConfig = (task) => {
 
 // Returns the Konva.Text configuration for a given task
 const getTaskTextConfig = (task) => {
-  // Truncate description if too long
-  let descriptionText = task.description;
-  if (descriptionText.length * 7 > task.width - TEXT_PADDING_X * 2) { // Rough character width estimate
-    const maxChars = Math.floor((task.width - TEXT_PADDING_X * 2) / 7) - 3; // -3 for "..."
-    if (maxChars > 0) {
-        descriptionText = descriptionText.substring(0, maxChars) + '...';
-    } else {
-        descriptionText = ''; // Too small for any text
-    }
+  const primaryText = task.name;
+  let secondaryText = '';
+
+  // Determine effective description to display, prioritizing description over duration label
+  if (task.description) {
+    secondaryText = task.description;
+  } else if (task.duration) {
+    secondaryText = `(${task.duration})`;
   }
 
-  const text = `${task.name}\n(${task.duration}${descriptionText ? ' - ' + descriptionText : ''})`;
-  const fontSize = 12; // Adjust as needed
+  // Combine texts
+  let combinedText = primaryText;
+  if (secondaryText) {
+    combinedText += `\n(${secondaryText})`; // New line for secondary info
+  }
+
+
+  // Measure text width using Konva's dummy canvas for more accurate truncation
+  // (This is a simplified approach, a more robust one might require a dummy Konva.Text node)
+  // For now, let's use a heuristic based on font size and character count.
+  const maxTextWidth = task.width - TEXT_PADDING_X * 2;
+  const avgCharWidth = FONT_SIZE * 0.6; // Heuristic: average character is 0.6 times font size
+
+  // Truncate logic for combined text to fit within two lines (if it becomes two lines)
+  // and within the available width. This is a bit complex for a simple heuristic.
+  // Konva.Text has 'width' and 'wrap' properties that help.
+  // We'll rely on Konva's built-in wrapping here and ensure the container is wide enough.
 
   return {
     x: task.x + TEXT_PADDING_X,
-    y: task.y + TASK_HEIGHT / 2 - fontSize / 2, // Vertically center text
-    text: text,
-    fontSize: fontSize,
-    fontFamily: 'Arial', // or sans-serif
+    y: task.y + TASK_HEIGHT / 2 - (combinedText.split('\n').length * FONT_SIZE / 2), // Center vertically based on line count
+    text: combinedText,
+    fontSize: FONT_SIZE,
+    fontFamily: FONT_FAMILY,
     fill: TEXT_COLOR,
-    width: task.width - TEXT_PADDING_X * 2, // Constrain text width
-    height: TASK_HEIGHT, // Allow multi-line text within task height
-    align: 'left',
-    verticalAlign: 'middle',
+    width: maxTextWidth, // Constrain text width to within task box padding
+    height: TASK_HEIGHT, // Allow text to take full height of task box
+    align: 'center', // Center text horizontally within its constrained width
+    verticalAlign: 'middle', // Vertically align within its height
     name: `task-text-${task.name}`,
     listening: false, // Text does not need to respond to events, rect handles it
+    ellipsis: true, // Add ellipsis if text overflows Konva.Text node width
+    wrap: 'word', // Wrap text by word
   };
 };
 
@@ -212,7 +238,8 @@ const handleWheel = (e) => {
     y: (pointer.y - stage.y()) / oldScale,
   };
 
-  const newScale = e.evt.deltaY > 0 ? oldScale * 0.9 : oldScale * 1.1; // Zoom out/in
+  // Zoom logic: deltaY > 0 means wheel down (zoom out), deltaY < 0 means wheel up (zoom in)
+  const newScale = e.evt.deltaY > 0 ? oldScale * 0.9 : oldScale * 1.1; // Zoom out/in by 10%
   scale.value = newScale;
 
   const newPos = {
@@ -223,8 +250,13 @@ const handleWheel = (e) => {
 
   // Recalculate stage dimensions after zoom to adjust drawing area
   if (canvasContainer.value && stageRef.value) {
-    stageRef.value.getStage().width(canvasContainer.value.offsetWidth / newScale);
-    stageRef.value.getStage().height(canvasContainer.value.offsetHeight / newScale);
+    // These lines are for adjusting the Konva virtual canvas size based on content scaling
+    // It's more about preventing scrollbars or clipped content if the internal Konva world
+    // becomes too small or too large relative to its viewport.
+    // However, for basic zoom/pan, the stage's scale and position properties are usually enough.
+    // Let's remove this complexity for now and see if it behaves better.
+    // stageRef.value.getStage().width(canvasContainer.value.offsetWidth / newScale);
+    // stageRef.value.getStage().height(canvasContainer.value.offsetHeight / newScale);
   }
 };
 
@@ -233,7 +265,7 @@ const handleWheel = (e) => {
 watch(
   tasksWithLayout, // Watch the computed property that includes layout
   (newTasks) => {
-    console.log('Scheduled tasks updated, Konva will re-render with new layout.');
+    // console.log('Scheduled tasks updated, Konva will re-render with new layout.');
     // No manual draw call needed, VueKonva handles reactivity
   },
   { deep: true, immediate: true }
@@ -242,8 +274,7 @@ watch(
 watch(
   () => props.errors,
   (newErrors) => {
-    // This will trigger re-rendering of tasks to apply error styling
-    console.log('Errors updated, Konva will re-render task styling.');
+    // console.log('Errors updated, Konva will re-render task styling.');
     // No manual draw call needed, VueKonva handles reactivity
   },
   { deep: true, immediate: true }
@@ -256,7 +287,7 @@ onMounted(() => {
       // Set Konva stage width/height to fill container, then scale it
       stageRef.value.getStage().width(canvasContainer.value.offsetWidth);
       stageRef.value.getStage().height(canvasContainer.value.offsetHeight);
-      // Reapply current scale and position
+      // Reapply current scale and position to maintain view
       stageRef.value.getStage().scale({ x: scale.value, y: scale.value });
       stageRef.value.getStage().position({ x: position.value.x, y: position.value.y });
       stageRef.value.getStage().batchDraw(); // Optimize redrawing
