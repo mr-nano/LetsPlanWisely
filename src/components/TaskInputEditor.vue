@@ -9,11 +9,9 @@ import { ref, onMounted, onUnmounted, watch, defineEmits, defineExpose } from 'v
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { basicSetup } from '@codemirror/basic-setup';
-import { autocompletion, CompletionContext } from '@codemirror/autocomplete'; // CompletionContext is a type, not a runtime value, but sometimes helps with type checking
+// Only import what's directly needed for the autocompletion *logic*
+import { autocompletion, CompletionContext, snippetCompletion, startCompletion } from '@codemirror/autocomplete';
 import { lintGutter, linter, setDiagnostics } from '@codemirror/lint';
-// Custom syntax highlighting is currently disabled as per previous commit.
-// import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
-// import { tags } from '@lezer/highlight';
 
 // --- PROPS & EMITS ---
 const emit = defineEmits(['update:markdown']);
@@ -38,87 +36,166 @@ S:2
 XL:15
 `;
 
-// --- CodeMirror Extensions (Custom Highlighting is REMOVED/COMMENTED OUT for now) ---
+// --- CodeMirror Extensions ---
 
 // Autocomplete Source
 const predefinedDurationLabels = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
 
-// New: Snippet for Task definition
-const taskSnippet = `Task "$NAME$" "$DESCRIPTION$" "$DURATION$" "$DEPENDENCIES$"`; // Use placeholders
-// Define the completion effect for a snippet
-import { snippetCompletion } from "@codemirror/autocomplete"; // REMOVE 'syntaxTree'
+// New: Simpler Task definition snippet string
+const SIMPLIFIED_TASK_SNIPPET = `Task "Task Name" "Optional Description" "Duration" "Optional list of dependent tasks"`;
 
 const myCompletion = (context) => {
-  const word = context.matchBefore(/\w*/); // Match any word characters
-  if (!word.from) return null; // No word to complete
-
+ console.log('--- Autocomplete Check ---');
+  console.log('Cursor pos:', context.pos);
   const line = context.state.doc.lineAt(context.pos);
   const lineText = line.text;
   const lineBeforeCursor = lineText.substring(0, context.pos - line.from);
+  const trimmedLineBeforeCursor = lineBeforeCursor.trimStart();
+  console.log('Line before cursor:', lineBeforeCursor);
+  console.log('Trimmed line before cursor:', trimmedLineBeforeCursor);
 
   let options = [];
 
   // --- Context-Specific Autocomplete Logic ---
 
-  // 1. Suggest 'Task' snippet if at the start of a line or after a blank line
-  if (lineBeforeCursor.trim() === 'Task' && lineBeforeCursor.length === 'Task'.length) {
-    return {
-      from: word.from,
-      options: [
-        snippetCompletion(taskSnippet, {
-          label: "Task (full definition)",
-          info: "Define a new task with name, description, duration, and dependencies.",
-          type: "keyword"
-        })
-      ]
-    };
+  // Change this line:
+// const taskPrefixMatch = context.matchBefore(/^\s*(task\w*)$/i);
+// To something like this:
+const taskPrefixMatch = context.matchBefore(/^\s*(t(?:a(?:s(?:k)?)?)?)$/i); // Matches t, ta, tas, task
+
+// Or a simpler, more robust way if context.matchBefore works by matching a word:
+const typedWordMatch = context.matchBefore(/\w*$/); // Matches any word characters before the cursor
+if (typedWordMatch && typedWordMatch.text.length > 0) {
+    const typedWord = typedWordMatch.text;
+    const lineStartTrimmedText = lineBeforeCursor.trimStart();
+
+    // Check if the typed word (e.g., "t", "ta", "tas", "task") starts at the beginning of the trimmed line
+    if (lineStartTrimmedText.startsWith(typedWord) && 'task'.toLowerCase().startsWith(typedWord.toLowerCase())) {
+        const actualWordStartOffset = lineBeforeCursor.length - lineStartTrimmedText.length;
+        const fromPos = line.from + actualWordStartOffset;
+
+        return {
+            from: fromPos,
+            options: [
+                {
+                    label: "Task (definition)",
+                    info: "Insert a new task definition",
+                    type: "keyword",
+                    apply: SIMPLIFIED_TASK_SNIPPET
+                }
+            ]
+        };
+    }
+}
+
+  // Helper to extract content within the last open quote segment
+  const getFragmentInLastOpenQuote = (text) => {
+    const lastOpenQuoteIndex = text.lastIndexOf('"');
+    if (lastOpenQuoteIndex === -1) return null; // No open quote
+
+    const lastClosingQuoteIndex = text.indexOf('"', lastOpenQuoteIndex + 1);
+    if (lastClosingQuoteIndex !== -1) return null; // Already closed quote
+
+    // Check if the current position is after the last open quote
+    if (context.pos > line.from + lastOpenQuoteIndex) {
+      return text.substring(lastOpenQuoteIndex + 1);
+    }
+    return null;
+  };
+
+  // ... after Task snippet logic ...
+
+  const fragmentInQuote = getFragmentInLastOpenQuote(lineBeforeCursor);
+  console.log('Fragment in quote:', fragmentInQuote);
+
+  if (fragmentInQuote !== null) {
+    // 2. Autocomplete for Task Names (inside dependency/name quotes)
+    // Refined heuristic: Check if current quote is part of a Task definition parameters
+    const isTaskParameterContext = lineBeforeCursor.match(/^Task\s*(?:"[^"]*"\s*){0,3}"(\w*)$/);
+    const isExplicitDependencyContext = lineBeforeCursor.match(/(?:depends on|should happen before|should happen after)\s+"(\w*)$/);
+
+    console.log('isTaskParameterContext:', isTaskParameterContext);
+    console.log('isExplicitDependencyContext:', isExplicitDependencyContext);
+
+    if (isTaskParameterContext || isExplicitDependencyContext) {
+      console.log('Context: Task parameter or explicit dependency field');
+      const parts = fragmentInQuote.split(',').map(s => s.trim());
+      const lastPart = parts[parts.length - 1]; // Current fragment after last comma
+      console.log('Dependency lastPart:', lastPart);
+
+      options = availableTaskNames
+        .filter(name => typeof name === 'string' && name.length > 0 && name.toLowerCase().startsWith(lastPart.toLowerCase()))
+        .map(name => ({
+          label: name,
+          type: 'variable',
+          apply: (view, completion) => { // 'from' and 'to' params aren't directly used here
+            const fragmentStartInQuote = lineText.lastIndexOf(lastPart, context.pos - line.from - 1);
+            const replaceFrom = line.from + fragmentStartInQuote;
+            
+            view.dispatch({
+              changes: {
+                from: replaceFrom,
+                to: context.pos,
+                insert: completion.label
+              }
+            });
+            startCompletion(view); // Trigger new completion
+          }
+        }));
+
+      if (options.length > 0) {
+        console.log('Dependency options:', options.map(o => o.label));
+        return {
+          from: line.from + lineBeforeCursor.lastIndexOf(lastPart),
+          options: options,
+          validFor: /[^"]*/
+        };
+      }
+    }
+
+
+    // 3. Autocomplete for Duration Labels (inside quotes)
+    const taskDurationFieldMatch = lineBeforeCursor.match(/^Task\s+"[^"]*"(?:\s+"[^"]*")?\s+"(\w*)$/); // Matches the third quoted string
+    console.log('taskDurationFieldMatch:', taskDurationFieldMatch);
+    if (taskDurationFieldMatch) {
+      console.log('Context: Duration field');
+      const potentialDuration = taskDurationFieldMatch[1];
+      options = predefinedDurationLabels
+        .filter(label => label.toLowerCase().startsWith(potentialDuration.toLowerCase()))
+        .map(label => ({ label: label, type: 'keyword', apply: label }));
+
+      if (options.length > 0) {
+          console.log('Duration options:', options.map(o => o.label));
+          return {
+            from: line.from + lineBeforeCursor.lastIndexOf(potentialDuration),
+            options: options,
+            validFor: /\w*/
+          };
+      }
+    }
+  }
+  
+  // 4. Autocomplete for Global Bandwidth keywords
+  if (trimmedLineBeforeCursor.startsWith('Global Bandwidth:') || trimmedLineBeforeCursor.startsWith('Global Bandwi')) {
+    console.log('Context: Global Bandwidth');
+    const wordMatch = context.matchBefore(/"?\w*"?$/);
+    const currentVal = wordMatch ? wordMatch.text.replace(/"/g, '') : '';
+    
+    options = ['"unbound"', '1', '2', '3', '4', '5'].filter(opt => opt.replace(/"/g, '').toLowerCase().startsWith(currentVal.toLowerCase()));
+    
+    if (options.length > 0) {
+        console.log('Global Bandwidth options:', options.map(o => o.label));
+        return {
+            from: context.pos - currentVal.length - (currentVal.startsWith('"') ? 1 : 0),
+            options: options.map(o => ({ label: o, type: 'constant', apply: o })),
+            validFor: /["\w]*/
+        };
+    }
   }
 
-
-  // 2. Autocomplete for Task Names (inside quotes)
-  // Check if cursor is inside a quoted string. This is a heuristic.
-  const regexInQuote = /"[^"]*$/; // Matches an open quote followed by any non-quote chars to end of string
-  const matchInQuote = lineBeforeCursor.match(regexInQuote);
-
-  if (matchInQuote) {
-    const textInQuote = matchInQuote[0].substring(1); // Get content after the opening quote
-    options = availableTaskNames
-      .filter(name => typeof name === 'string' && name.length > 0 && name.toLowerCase().startsWith(textInQuote.toLowerCase()))
-      .map(name => ({ label: name, type: 'variable', apply: `"${name}"` })); // Apply with quotes for seamless replacement
-      // If we are inside an already existing quoted string (e.g. "Task "My Task" "Desc" "Dur" "Depen^cies""),
-      // the `apply` will be crucial to replace just the portion inside quotes.
-      // `apply` can also be a function, but for simple strings, it replaces `word.text`.
-      // We will adjust the `from` property to ensure the replacement covers the text *inside* the quotes.
-    const quoteStartPos = line.from + lineBeforeCursor.lastIndexOf('"') + 1;
-    return {
-      from: quoteStartPos, // Start completion from after the opening quote
-      options: options,
-      validFor: /[^"]*/ // Valid for any character until a closing quote
-    };
-  }
-
-
-  // 3. Autocomplete for Duration Labels
-  // Check if it's a "Task ... " duration field
-  // This regex targets the *last* quoted string field in a "Task" definition that's incomplete
-  const taskDurationMatch = lineBeforeCursor.match(/^Task\s+"[^"]*"(?:\s+"[^"]*")?\s+"(\w*)$/);
-  if (taskDurationMatch) {
-    const potentialDuration = taskDurationMatch[1]; // What the user has typed for duration
-    options = predefinedDurationLabels
-      .filter(label => label.toLowerCase().startsWith(potentialDuration.toLowerCase()))
-      .map(label => ({ label: label, type: 'keyword' }));
-
-    return {
-      from: line.from + lineBeforeCursor.lastIndexOf('"') + 1 + potentialDuration.length - word.text.length, // Adjust 'from' for duration
-      options: options,
-      validFor: /\w*/ // Valid for word characters
-    };
-  }
-
-  // Default: no completion
+  console.log('No completion context matched.');
   return null;
 };
-
 
 // Linting Source (for displaying errors from App.vue)
 let currentDiagnostics = [];
@@ -138,7 +215,6 @@ onMounted(() => {
       doc: initialMarkdown,
       extensions: [
         basicSetup,
-        // customLanguageSupport, // STILL DISABLED
         autocompletion({ override: [myCompletion] }),
         lintGutter(),
         linterCompartment.of(linter(lintSource)),
@@ -153,7 +229,7 @@ onMounted(() => {
   });
 });
 
-onUnmounted(() => { // Corrected: onUnmounted
+onUnmounted(() => {
   if (view) {
     view.destroy();
   }
@@ -176,8 +252,8 @@ const setLintDiagnostics = (errors) => {
         to = lineObj.to;
       } catch (e) {
         console.warn("Could not map error line to CodeMirror range:", err, e);
-        from = 0; // Fallback to start
-        to = view.state.doc.length; // Fallback to end
+        from = 0;
+        to = view.state.doc.length;
       }
     }
 
@@ -209,37 +285,37 @@ defineExpose({
 }
 /* Adjust CodeMirror's default font size if needed for consistency */
 .cm-editor .cm-line {
-  font-family: monospace; /* Ensure monospace font */
-  font-size: 0.875rem; /* Equivalent to text-sm (14px) */
-  line-height: 1.5; /* Equivalent to leading-relaxed */
+  font-family: monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
 }
 /* Style for autocomplete popup */
 .cm-tooltip-autocomplete {
   background-color: white;
-  border: 1px solid #e2e8f0; /* gray-300 */
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* shadow-lg */
-  border-radius: 0.375rem; /* rounded-md */
-  max-height: 12rem; /* max-h-48 */
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  border-radius: 0.375rem;
+  max-height: 12rem;
   overflow-y: auto;
-  z-index: 100; /* Ensure it's above other elements */
+  z-index: 100;
 }
 .cm-completionLabel {
-  padding: 0.5rem 0.75rem; /* p-2 */
+  padding: 0.5rem 0.75rem;
   cursor: pointer;
-  font-size: 0.875rem; /* text-sm */
+  font-size: 0.875rem;
 }
 .cm-active.cm-completionLabel {
-  background-color: #3b82f6; /* blue-500 */
+  background-color: #3b82f6;
   color: white;
 }
 .cm-tooltip-autocomplete > ul > li:hover:not(.cm-active) {
-  background-color: #eff6ff; /* blue-100 */
+  background-color: #eff6ff;
 }
 /* Style for lint gutter icons */
 .cm-lint-marker-error {
-  color: #ef4444; /* red-500 */
+  color: #ef4444;
 }
 .cm-lint-marker-warning {
-  color: #f59e0b; /* yellow-500 */
+  color: #f59e0b;
 }
 </style>
