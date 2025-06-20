@@ -20,7 +20,7 @@
       <h2 class="text-xl font-semibold mb-4 text-gray-700">Task Visualization</h2>
       <TaskVisualizationCanvas
         class="flex-grow min-h-0 bg-white border border-gray-200 rounded shadow-inner overflow-hidden"
-        :parsedData="parsedData"
+        :scheduledTasks="scheduledTasks"
         :errors="errors"
       />
     </div>
@@ -31,9 +31,10 @@
 import { ref, computed, onMounted } from 'vue';
 import TaskInputEditor from './components/TaskInputEditor.vue';
 import TaskVisualizationCanvas from './components/TaskVisualizationCanvas.vue';
-import { parseMarkdown } from './utils/parser.js'; // Import our parser
+import { parseMarkdown } from './utils/parser.js';
+import { scheduleTasks } from './utils/scheduler.js'; // Import our new scheduler
 
-// Reactive variable to hold the parsed data
+// Reactive variable to hold the parsed data from markdown
 const parsedData = ref({
   tasks: [],
   dependencies: [],
@@ -42,7 +43,10 @@ const parsedData = ref({
   taskGroups: [],
 });
 
-// Reactive variable to hold parsing errors
+// Reactive variable to hold the final scheduled tasks (with start/end times)
+const scheduledTasks = ref([]);
+
+// Reactive variable to hold parsing and scheduling errors
 const errors = ref([]);
 
 // Computed property for dynamic error message box styling
@@ -61,25 +65,45 @@ const errorClass = computed(() => {
 
 // Handler for when the markdown input updates
 const handleMarkdownUpdate = (markdown) => {
-  const result = parseMarkdown(markdown);
+  const parseResult = parseMarkdown(markdown);
   parsedData.value = {
-    tasks: result.tasks,
-    dependencies: result.dependencies,
-    durationLabels: result.durationLabels,
-    globalBandwidth: result.globalBandwidth,
-    taskGroups: result.taskGroups,
+    tasks: parseResult.tasks,
+    dependencies: parseResult.dependencies,
+    durationLabels: parseResult.durationLabels,
+    globalBandwidth: parseResult.globalBandwidth,
+    taskGroups: parseResult.taskGroups,
   };
-  errors.value = result.errors;
+
+  // Combine parser errors and potential scheduler errors
+  const currentErrors = [...parseResult.errors]; // Start with parser errors
+
+  if (parseResult.errors.filter(e => e.type === 'error').length > 0) {
+      // If there are parsing errors, don't attempt to schedule
+      scheduledTasks.value = [];
+      errors.value = currentErrors;
+      console.log('Skipping scheduling due to parsing errors.');
+  } else {
+      // Proceed to scheduling only if parsing was successful
+      const scheduleResult = scheduleTasks(
+          parsedData.value.tasks,
+          parsedData.value.dependencies,
+          parsedData.value.globalBandwidth,
+          parsedData.value.taskGroups
+      );
+
+      scheduledTasks.value = scheduleResult.scheduledTasks;
+      currentErrors.push(...scheduleResult.errors); // Add scheduler errors
+
+      errors.value = currentErrors; // Update the errors ref for UI
+  }
 
   console.log('Parsed Data:', parsedData.value);
-  console.log('Errors:', errors.value);
+  console.log('Scheduled Tasks:', scheduledTasks.value);
+  console.log('All Errors:', errors.value);
 };
 
-// Initialize with a parse of the default content from TaskInputEditor
-// This ensures the App component processes the initial markdown from TaskInputEditor
-// immediately when App.vue is mounted.
+// Trigger initial parse on component mount with default content
 onMounted(() => {
-  // The default content from TaskInputEditor.vue
   const initialMarkdown = `Task "Develop UI" "Implement frontend" "M" "Code Backend"
 Task "Code Backend" "Develop API and DB" "L"
 Task "Write Docs" "Prepare user documentation" "S" "Develop UI"
@@ -97,9 +121,8 @@ XL:15
 </script>
 
 <style>
-/* You can add any global styles here, but Tailwind handles most of it */
 body {
   margin: 0;
-  overflow: hidden; /* Prevent body scroll if content fills viewport */
+  overflow: hidden;
 }
 </style>

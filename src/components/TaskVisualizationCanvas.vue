@@ -10,17 +10,11 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 const canvasContainer = ref(null);
 let stage = null; // Will hold Konva.Stage or Pixi.Application instance
 
-// This component will receive parsed task data from App.vue
+// This component will receive scheduled task data from App.vue
 const props = defineProps({
-  parsedData: { // New prop to receive all parsed data
-    type: Object,
-    default: () => ({
-      tasks: [],
-      dependencies: [],
-      durationLabels: {},
-      globalBandwidth: 'unbound',
-      taskGroups: [],
-    })
+  scheduledTasks: { // Renamed prop to reflect scheduled data
+    type: Array,
+    default: () => []
   },
   errors: {
     type: Array,
@@ -29,10 +23,9 @@ const props = defineProps({
 });
 
 onMounted(() => {
-  // Placeholder for Konva.js or PixiJS initialization
   console.log('Canvas container mounted:', canvasContainer.value);
   // Initial render based on initial props
-  renderVisualization(props.parsedData, props.errors);
+  renderVisualization(props.scheduledTasks, props.errors);
 });
 
 onUnmounted(() => {
@@ -43,19 +36,19 @@ onUnmounted(() => {
 });
 
 // Function to handle rendering (will be filled with Konva/Pixi logic later)
-const renderVisualization = (data, errs) => {
-  console.log('Visualization received parsed data:', data);
+const renderVisualization = (tasks, errs) => {
+  console.log('Visualization received scheduled tasks:', tasks);
   console.log('Visualization received errors:', errs);
   // This is where your Konva.js/PixiJS rendering logic will go.
   // For now, it just logs.
 };
 
-// Watch for changes in parsedData or errors to re-render the visualization
-watch(() => props.parsedData, (newData) => {
-  renderVisualization(newData, props.errors);
-}, { deep: true }); // Use deep watch for objects
+// Watch for changes in scheduledTasks or errors to re-render the visualization
+watch(() => props.scheduledTasks, (newTasks) => {
+  renderVisualization(newTasks, props.errors);
+}, { deep: true }); // Use deep watch for objects if task objects can change internally
 
 watch(() => props.errors, (newErrors) => {
-  renderVisualization(props.parsedData, newErrors);
+  renderVisualization(props.scheduledTasks, newErrors);
 });
 </script>
