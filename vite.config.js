@@ -16,15 +16,14 @@ export default defineConfig({
   },
   resolve: {
     dedupe: [
-      'vue', // It's good practice to dedupe vue as well
+      'vue',
       '@codemirror/state',
       '@codemirror/view',
-      // You might need to add other @codemirror/* packages here if the issue persists
     ],
-    // REMOVE THE 'alias' SECTION ENTIRELY
-    // alias: {
-    //     "@codemirror/state": "@codemirror/state/dist/index.js",
-    //     "@codemirror/view": "@codemirror/view/dist/index.js",
-    // }
-  }
+  },
+  // Add Vitest configuration
+  test: {
+    environment: 'jsdom', // Simulate browser DOM for editor-related tests
+    globals: true, // Allow using `describe`, `it`, `expect` globally
+  },
 })

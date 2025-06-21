@@ -9,9 +9,11 @@ import { ref, onMounted, onUnmounted, watch, defineEmits, defineExpose } from 'v
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { basicSetup } from '@codemirror/basic-setup';
-// Only import what's directly needed for the autocompletion *logic*
-import { autocompletion, CompletionContext, snippetCompletion, startCompletion } from '@codemirror/autocomplete';
+import { autocompletion } from '@codemirror/autocomplete'; // Only autocompletion here
 import { lintGutter, linter, setDiagnostics } from '@codemirror/lint';
+
+// Import from our new completionProvider module
+import { myCompletion, setAvailableTaskNamesForCompletion } from '../utils/completionProvider.js';
 
 // --- PROPS & EMITS ---
 const emit = defineEmits(['update:markdown']);
@@ -19,7 +21,6 @@ const emit = defineEmits(['update:markdown']);
 // --- REFS ---
 const editorContainer = ref(null);
 let view = null; // CodeMirror EditorView instance
-let availableTaskNames = []; // Task names for autocomplete
 const linterCompartment = new Compartment(); // To update linting diagnostics dynamically
 
 // Initial content for the editor
@@ -37,165 +38,6 @@ XL:15
 `;
 
 // --- CodeMirror Extensions ---
-
-// Autocomplete Source
-const predefinedDurationLabels = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
-
-// New: Simpler Task definition snippet string
-const SIMPLIFIED_TASK_SNIPPET = `Task "Task Name" "Optional Description" "Duration" "Optional list of dependent tasks"`;
-
-const myCompletion = (context) => {
- console.log('--- Autocomplete Check ---');
-  console.log('Cursor pos:', context.pos);
-  const line = context.state.doc.lineAt(context.pos);
-  const lineText = line.text;
-  const lineBeforeCursor = lineText.substring(0, context.pos - line.from);
-  const trimmedLineBeforeCursor = lineBeforeCursor.trimStart();
-  console.log('Line before cursor:', lineBeforeCursor);
-  console.log('Trimmed line before cursor:', trimmedLineBeforeCursor);
-
-  let options = [];
-
-  // --- Context-Specific Autocomplete Logic ---
-
-  // Change this line:
-// const taskPrefixMatch = context.matchBefore(/^\s*(task\w*)$/i);
-// To something like this:
-const taskPrefixMatch = context.matchBefore(/^\s*(t(?:a(?:s(?:k)?)?)?)$/i); // Matches t, ta, tas, task
-
-// Or a simpler, more robust way if context.matchBefore works by matching a word:
-const typedWordMatch = context.matchBefore(/\w*$/); // Matches any word characters before the cursor
-if (typedWordMatch && typedWordMatch.text.length > 0) {
-    const typedWord = typedWordMatch.text;
-    const lineStartTrimmedText = lineBeforeCursor.trimStart();
-
-    // Check if the typed word (e.g., "t", "ta", "tas", "task") starts at the beginning of the trimmed line
-    if (lineStartTrimmedText.startsWith(typedWord) && 'task'.toLowerCase().startsWith(typedWord.toLowerCase())) {
-        const actualWordStartOffset = lineBeforeCursor.length - lineStartTrimmedText.length;
-        const fromPos = line.from + actualWordStartOffset;
-
-        return {
-            from: fromPos,
-            options: [
-                {
-                    label: "Task (definition)",
-                    info: "Insert a new task definition",
-                    type: "keyword",
-                    apply: SIMPLIFIED_TASK_SNIPPET
-                }
-            ]
-        };
-    }
-}
-
-  // Helper to extract content within the last open quote segment
-  const getFragmentInLastOpenQuote = (text) => {
-    const lastOpenQuoteIndex = text.lastIndexOf('"');
-    if (lastOpenQuoteIndex === -1) return null; // No open quote
-
-    const lastClosingQuoteIndex = text.indexOf('"', lastOpenQuoteIndex + 1);
-    if (lastClosingQuoteIndex !== -1) return null; // Already closed quote
-
-    // Check if the current position is after the last open quote
-    if (context.pos > line.from + lastOpenQuoteIndex) {
-      return text.substring(lastOpenQuoteIndex + 1);
-    }
-    return null;
-  };
-
-  // ... after Task snippet logic ...
-
-  const fragmentInQuote = getFragmentInLastOpenQuote(lineBeforeCursor);
-  console.log('Fragment in quote:', fragmentInQuote);
-
-  if (fragmentInQuote !== null) {
-    // 2. Autocomplete for Task Names (inside dependency/name quotes)
-    // Refined heuristic: Check if current quote is part of a Task definition parameters
-    const isTaskParameterContext = lineBeforeCursor.match(/^Task\s*(?:"[^"]*"\s*){0,3}"(\w*)$/);
-    const isExplicitDependencyContext = lineBeforeCursor.match(/(?:depends on|should happen before|should happen after)\s+"(\w*)$/);
-
-    console.log('isTaskParameterContext:', isTaskParameterContext);
-    console.log('isExplicitDependencyContext:', isExplicitDependencyContext);
-
-    if (isTaskParameterContext || isExplicitDependencyContext) {
-      console.log('Context: Task parameter or explicit dependency field');
-      const parts = fragmentInQuote.split(',').map(s => s.trim());
-      const lastPart = parts[parts.length - 1]; // Current fragment after last comma
-      console.log('Dependency lastPart:', lastPart);
-
-      options = availableTaskNames
-        .filter(name => typeof name === 'string' && name.length > 0 && name.toLowerCase().startsWith(lastPart.toLowerCase()))
-        .map(name => ({
-          label: name,
-          type: 'variable',
-          apply: (view, completion) => { // 'from' and 'to' params aren't directly used here
-            const fragmentStartInQuote = lineText.lastIndexOf(lastPart, context.pos - line.from - 1);
-            const replaceFrom = line.from + fragmentStartInQuote;
-            
-            view.dispatch({
-              changes: {
-                from: replaceFrom,
-                to: context.pos,
-                insert: completion.label
-              }
-            });
-            startCompletion(view); // Trigger new completion
-          }
-        }));
-
-      if (options.length > 0) {
-        console.log('Dependency options:', options.map(o => o.label));
-        return {
-          from: line.from + lineBeforeCursor.lastIndexOf(lastPart),
-          options: options,
-          validFor: /[^"]*/
-        };
-      }
-    }
-
-
-    // 3. Autocomplete for Duration Labels (inside quotes)
-    const taskDurationFieldMatch = lineBeforeCursor.match(/^Task\s+"[^"]*"(?:\s+"[^"]*")?\s+"(\w*)$/); // Matches the third quoted string
-    console.log('taskDurationFieldMatch:', taskDurationFieldMatch);
-    if (taskDurationFieldMatch) {
-      console.log('Context: Duration field');
-      const potentialDuration = taskDurationFieldMatch[1];
-      options = predefinedDurationLabels
-        .filter(label => label.toLowerCase().startsWith(potentialDuration.toLowerCase()))
-        .map(label => ({ label: label, type: 'keyword', apply: label }));
-
-      if (options.length > 0) {
-          console.log('Duration options:', options.map(o => o.label));
-          return {
-            from: line.from + lineBeforeCursor.lastIndexOf(potentialDuration),
-            options: options,
-            validFor: /\w*/
-          };
-      }
-    }
-  }
-  
-  // 4. Autocomplete for Global Bandwidth keywords
-  if (trimmedLineBeforeCursor.startsWith('Global Bandwidth:') || trimmedLineBeforeCursor.startsWith('Global Bandwi')) {
-    console.log('Context: Global Bandwidth');
-    const wordMatch = context.matchBefore(/"?\w*"?$/);
-    const currentVal = wordMatch ? wordMatch.text.replace(/"/g, '') : '';
-    
-    options = ['"unbound"', '1', '2', '3', '4', '5'].filter(opt => opt.replace(/"/g, '').toLowerCase().startsWith(currentVal.toLowerCase()));
-    
-    if (options.length > 0) {
-        console.log('Global Bandwidth options:', options.map(o => o.label));
-        return {
-            from: context.pos - currentVal.length - (currentVal.startsWith('"') ? 1 : 0),
-            options: options.map(o => ({ label: o, type: 'constant', apply: o })),
-            validFor: /["\w]*/
-        };
-    }
-  }
-
-  console.log('No completion context matched.');
-  return null;
-};
 
 // Linting Source (for displaying errors from App.vue)
 let currentDiagnostics = [];
@@ -215,7 +57,7 @@ onMounted(() => {
       doc: initialMarkdown,
       extensions: [
         basicSetup,
-        autocompletion({ override: [myCompletion] }),
+        autocompletion({ override: [myCompletion] }), // Use imported myCompletion
         lintGutter(),
         linterCompartment.of(linter(lintSource)),
         EditorView.updateListener.of((update) => {
@@ -236,8 +78,9 @@ onUnmounted(() => {
 });
 
 // --- EXPOSED METHODS ---
+// This now calls the exported function from completionProvider.js
 const setAvailableTaskNames = (names) => {
-  availableTaskNames = Array.isArray(names) ? names.filter(name => typeof name === 'string' && name.length > 0) : [];
+  setAvailableTaskNamesForCompletion(names);
 };
 
 const setLintDiagnostics = (errors) => {
