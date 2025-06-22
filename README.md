@@ -1,7 +1,3 @@
-Here's a README.md file based on the code snippets and features you've implemented and discussed:
-
------
-
 # Task Flow Visualizer
 
 This project provides a web-based application to define and visualize task dependencies and scheduling using a simple Markdown-like input format. It features a CodeMirror editor for input, real-time parsing and linting, and a Konva.js-powered canvas for dynamic visualization of the task schedule.
