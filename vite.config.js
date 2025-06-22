@@ -7,6 +7,7 @@ import autoprefixer from 'autoprefixer'
 // --- PASTE YOUR TAILWIND CONFIG DIRECTLY HERE ---
 // (This is the entire content of your tailwind.config.js)
 const tailwindConfig = {
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{vue,js,ts,jsx,tsx}",

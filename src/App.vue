@@ -1,36 +1,58 @@
 <template>
-  <div class="flex h-screen bg-gray-50 font-sans text-gray-800 overflow-hidden">
-    <div ref="leftPanel" class="flex flex-col border-r border-gray-200 transition-width duration-100 ease-in-out"
-      :style="{ width: leftPanelWidth }" :class="{
+  <div class="flex h-screen bg-gray-50 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 overflow-hidden">
+    <div
+      ref="leftPanel"
+      class="flex flex-col border-r border-gray-200 dark:border-gray-700 transition-width duration-100 ease-in-out"
+      :style="{ width: leftPanelWidth }"
+      :class="{
         'absolute inset-0 w-full h-full z-40': activeFullscreenPanel === 'left',
         'hidden': activeFullscreenPanel === 'right',
         'flex-grow': activeFullscreenPanel === null // Only flex-grow in split mode
-      }">
-      <div class="flex items-center justify-between mb-4 text-gray-700 p-4">
+      }"
+    >
+      <div class="flex items-center justify-between mb-4 text-gray-700 dark:text-gray-300 p-4">
         <h2 class="text-xl font-semibold">Markdown Input</h2>
         <div class="flex items-center">
-          <button @click="toggleWordWrap"
-            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 mr-2"
-            :title="isWordWrappingEnabled ? 'Disable Word Wrap' : 'Enable Word Wrap'">
-            <span v-if="isWordWrappingEnabled">↔</span> <span v-else>⟷</span> </button>
-
-          <button @click="toggleFullscreen('left')"
-            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200"
-            :title="activeFullscreenPanel === 'left' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Editor (F11)'">
+          <button
+            @click="toggleWordWrap"
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 dark:hover:bg-gray-700 mr-2"
+            :title="isWordWrappingEnabled ? 'Disable Word Wrap' : 'Enable Word Wrap'"
+          >
+            <span v-if="isWordWrappingEnabled">↔</span> <span v-else>⟷</span>
+          </button>
+          <button
+            @click="toggleFullscreen('left')"
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            :title="activeFullscreenPanel === 'left' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Editor (F11)'"
+          >
             <span v-if="activeFullscreenPanel !== 'left'">⛶</span>
             <span v-else>✕</span>
           </button>
         </div>
       </div>
-      <TaskInputEditor ref="taskInputEditorRef" class="flex-grow min-h-0 px-4"
-        @update:markdown="handleMarkdownUpdate" />
-      <div class="mt-4 p-2 rounded mx-4 mb-4" :class="errorClass">
-        <p v-if="errors.length === 0" class="text-green-800">No parsing errors or warnings.</p>
+      <TaskInputEditor
+        ref="taskInputEditorRef"
+        class="flex-grow min-h-0 px-4"
+        @update:markdown="handleMarkdownUpdate"
+      />
+      <div
+        class="mt-4 p-2 rounded mx-4 mb-4"
+        :class="[
+          errorClass, // This provides the base (light mode) classes
+          // Now add dark mode overrides for error/warning states
+          {
+            'dark:bg-green-800 dark:border-green-700 dark:text-green-100': errors.length === 0, // No errors/warnings
+            'dark:bg-red-800 dark:border-red-700 dark:text-red-100': errors.some(e => e.type === 'error'), // Has errors
+            'dark:bg-yellow-800 dark:border-yellow-700 dark:text-yellow-100': errors.some(e => e.type === 'warning') && !errors.some(e => e.type === 'error') // Has warnings only
+          }
+        ]"
+      >
+        <p v-if="errors.length === 0" class="text-green-800 dark:text-green-200">No parsing errors or warnings.</p>
         <div v-else>
-          <p class="font-semibold text-red-800">Parsing Issues:</p>
+          <p class="font-semibold text-red-800 dark:text-red-200">Parsing Issues:</p>
           <ul class="list-disc pl-5 text-sm">
             <li v-for="(error, index) in errors" :key="index"
-              :class="error.type === 'error' ? 'text-red-700' : 'text-yellow-700'">
+              :class="error.type === 'error' ? 'text-red-700 dark:text-red-100' : 'text-yellow-700 dark:text-yellow-100'">
               {{ error.message }} <span v-if="error.line !== 'N/A'">(Line: {{ error.line }})</span>
             </li>
           </ul>
@@ -38,35 +60,57 @@
       </div>
     </div>
 
-    <div v-if="activeFullscreenPanel === null"
-      class="w-2 h-full cursor-ew-resize bg-gray-300 hover:bg-blue-400 transition-colors duration-100 ease-in-out flex-shrink-0"
-      style="min-width: 8px;" @mousedown="startResizing"></div>
+    <div
+      v-if="activeFullscreenPanel === null"
+      class="w-2 h-full cursor-ew-resize bg-gray-300 dark:bg-gray-700 hover:bg-blue-400 dark:hover:bg-blue-500 transition-colors duration-100 ease-in-out flex-shrink-0"
+      style="min-width: 8px;"
+      @mousedown="startResizing"
+    ></div>
 
-    <div ref="rightPanel" class="flex flex-col transition-width duration-100 ease-in-out"
-      :style="{ width: rightPanelWidth }" :class="{
+    <div
+      ref="rightPanel"
+      class="flex flex-col transition-width duration-100 ease-in-out"
+      :style="{ width: rightPanelWidth }"
+      :class="{
         'absolute inset-0 w-full h-full z-40': activeFullscreenPanel === 'right',
         'hidden': activeFullscreenPanel === 'left',
         'flex-grow': activeFullscreenPanel === null // Only flex-grow in split mode
-      }">
-      <div class="flex items-center justify-between mb-4 text-gray-700 p-4">
+      }"
+    >
+      <div class="flex items-center justify-between mb-4 text-gray-700 dark:text-gray-300 p-4">
         <h2 class="text-xl font-semibold">Task Visualization</h2>
         <div class="flex items-center">
-          <button @click="zoomToFitCanvas"
-            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 mr-2" title="Zoom to Fit">
-            <span class="transform scale-x-[-1]">&#x21F2;</span> </button>
-          <button @click="toggleFullscreen('right')"
-            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200"
-            :title="activeFullscreenPanel === 'right' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Visualization (F11)'">
+          <button
+            @click="toggleDarkMode"
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 dark:hover:bg-gray-700 mr-2"
+            :title="isDarkMode ? 'Toggle Light Mode' : 'Toggle Dark Mode'"
+          >
+            <span v-if="isDarkMode">☀️</span> <span v-else>🌒</span>
+          </button>
+          <button
+            @click="zoomToFitCanvas"
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 dark:hover:bg-gray-700 mr-2"
+            title="Zoom to Fit"
+          >
+            <span class="transform scale-x-[-1]">&#x21F2;</span>
+          </button>
+          <button
+            @click="toggleFullscreen('right')"
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            :title="activeFullscreenPanel === 'right' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Visualization (F11)'"
+          >
             <span v-if="activeFullscreenPanel !== 'right'">⛶</span>
             <span v-else>✕</span>
           </button>
         </div>
       </div>
-      <TaskVisualizationCanvas ref="canvasRef"
-        class="flex-grow min-h-0 mx-4 mb-4 bg-white border border-gray-200 rounded shadow-inner overflow-hidden"
-        :scheduledTasks="scheduledTasks" :errors="errors" />
+      <TaskVisualizationCanvas
+        ref="canvasRef"
+        class="flex-grow min-h-0 mx-4 mb-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-inner dark:shadow-md overflow-hidden"
+        :scheduledTasks="scheduledTasks"
+        :errors="errors"
+      />
     </div>
-
   </div>
 </template>
 
@@ -83,14 +127,15 @@ const canvasRef = ref(null);
 const leftPanel = ref(null);
 const rightPanel = ref(null);
 const isWordWrappingEnabled = ref(false);
+const isDarkMode = ref(false); // <--- Make sure this ref is present!
 
 // Panel resizing state
-const initialLeftPanelWidth = parseFloat(localStorage.getItem('leftPanelWidth') || '50'); // Store as number
+const initialLeftPanelWidth = parseFloat(localStorage.getItem('leftPanelWidth') || '50');
 const leftPanelPercentage = ref(initialLeftPanelWidth);
 const isResizing = ref(false);
 
 // Fullscreen state (CSS-driven, not browser API)
-const activeFullscreenPanel = ref(null); // 'left', 'right', or null
+const activeFullscreenPanel = ref(null);
 
 const parsedData = ref({
   tasks: [],
@@ -108,6 +153,7 @@ const errorClass = computed(() => {
   const hasErrors = errors.value.some(e => e.type === 'error');
   const hasWarnings = errors.value.some(e => e.type === 'warning');
 
+  // These classes define the default (light mode) appearance
   if (hasErrors) {
     return 'bg-red-100 border border-red-200 text-red-800';
   } else if (hasWarnings) {
@@ -119,13 +165,13 @@ const errorClass = computed(() => {
 
 const leftPanelWidth = computed(() => {
   if (activeFullscreenPanel.value === 'left') return '100%';
-  if (activeFullscreenPanel.value === 'right') return '0px'; // Hide when other panel is fullscreen
+  if (activeFullscreenPanel.value === 'right') return '0px';
   return `${leftPanelPercentage.value}%`;
 });
 
 const rightPanelWidth = computed(() => {
   if (activeFullscreenPanel.value === 'right') return '100%';
-  if (activeFullscreenPanel.value === 'left') return '0px'; // Hide when other panel is fullscreen
+  if (activeFullscreenPanel.value === 'left') return '0px';
   return `${100 - leftPanelPercentage.value}%`;
 });
 
@@ -161,10 +207,20 @@ const handleMarkdownUpdate = (markdown) => {
   errors.value = currentErrors;
 };
 
-// New method to toggle word wrapping
+// --- Make sure this method is present ---
+const toggleDarkMode = () => {
+  isDarkMode.value = !isDarkMode.value;
+  if (isDarkMode.value) {
+    document.documentElement.classList.add('dark');
+    localStorage.setItem('theme', 'dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+    localStorage.setItem('theme', 'light');
+  }
+};
+
 const toggleWordWrap = () => {
   isWordWrappingEnabled.value = !isWordWrappingEnabled.value;
-  // Call the exposed method on the child component
   if (taskInputEditorRef.value) {
     taskInputEditorRef.value.setWordWrapping(isWordWrappingEnabled.value);
   }
@@ -172,7 +228,7 @@ const toggleWordWrap = () => {
 
 // --- Resizing Logic ---
 const startResizing = (e) => {
-  if (activeFullscreenPanel.value !== null) return; // Prevent resizing in fullscreen
+  if (activeFullscreenPanel.value !== null) return;
   e.preventDefault();
   isResizing.value = true;
   document.addEventListener('mousemove', resizePanels);
@@ -183,19 +239,13 @@ const startResizing = (e) => {
 
 const resizePanels = (e) => {
   if (!isResizing.value || !leftPanel.value || !rightPanel.value) return;
-
-  const container = leftPanel.value.parentElement; // Assumes parent of leftPanel is the main flex container
+  const container = leftPanel.value.parentElement;
   if (!container) return;
-
   const containerRect = container.getBoundingClientRect();
   const containerWidth = containerRect.width;
-
   let newLeftWidthPx = e.clientX - containerRect.left;
   let newLeftPercentage = (newLeftWidthPx / containerWidth) * 100;
-
-  // Constrain widths (e.g., min 10% for each panel)
   newLeftPercentage = Math.max(10, Math.min(90, newLeftPercentage));
-
   leftPanelPercentage.value = newLeftPercentage;
   localStorage.setItem('leftPanelWidth', newLeftPercentage.toFixed(2));
 };
@@ -208,24 +258,19 @@ const stopResizing = () => {
   document.body.style.userSelect = 'auto';
 };
 
-
 const zoomToFitCanvas = () => {
   if (canvasRef.value && canvasRef.value.zoomToFit) {
     canvasRef.value.zoomToFit();
   }
 };
 
-// --- Fullscreen Logic (CSS-driven) ---
+// --- Fullscreen Logic ---
 const toggleFullscreen = (panel) => {
   if (activeFullscreenPanel.value === panel) {
-    // If clicking on the already active panel, exit fullscreen
     activeFullscreenPanel.value = null;
   } else {
-    // Enter fullscreen for the selected panel
     activeFullscreenPanel.value = panel;
   }
-  // Trigger Konva redraw after panel transition
-  // A small delay ensures the DOM has updated its sizes
   setTimeout(() => {
     if (canvasRef.value && canvasRef.value.canvasContainer && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
       const stage = canvasRef.value.stageRef.getStage();
@@ -233,7 +278,6 @@ const toggleFullscreen = (panel) => {
         stage.width(canvasRef.value.canvasContainer.value.offsetWidth);
         stage.height(canvasRef.value.canvasContainer.value.offsetHeight);
         stage.batchDraw();
-        // Optional: Reset Konva pan/zoom when entering/exiting fullscreen for a clean view
         stage.scaleX(1);
         stage.scaleY(1);
         stage.x(0);
@@ -241,11 +285,10 @@ const toggleFullscreen = (panel) => {
         stage.draw();
       }
     }
-    // Also trigger CodeMirror resize if it's the editor that went fullscreen
     if (taskInputEditorRef.value && taskInputEditorRef.value.view) {
-      taskInputEditorRef.value.view.requestMeasure(); // Forces CodeMirror to recalculate its dimensions
+      taskInputEditorRef.value.view.requestMeasure();
     }
-  }, 100); // Small delay for CSS transitions to apply
+  }, 100);
 };
 
 // --- LIFECYCLE HOOKS ---
@@ -263,13 +306,26 @@ S:2
 XL:15
 `;
   handleMarkdownUpdate(initialMarkdown);
+
+  // --- Make sure this initialization logic is present ---
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme) {
+    isDarkMode.value = savedTheme === 'dark';
+  } else {
+    isDarkMode.value = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  if (isDarkMode.value) {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
+  // --- End of initialization logic ---
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousemove', resizePanels);
   document.removeEventListener('mouseup', stopResizing);
 });
-
 
 // --- WATCHERS ---
 watch(() => parsedData.value.tasks, (newTasks) => {
@@ -285,12 +341,7 @@ watch(() => errors.value, (newErrors) => {
   }
 }, { immediate: true, deep: true });
 
-// Watch for panel width changes to trigger Konva resize and CodeMirror recalculation
 watch([leftPanelPercentage, activeFullscreenPanel], () => {
-  // This watcher combines the effects that are in separate watch blocks for robustness
-  // The Konva and CodeMirror resize logic is now consolidated in toggleFullscreen for explicit triggers.
-  // However, for manual resize (not fullscreen), CodeMirror and Konva might still need a nudge.
-  // The ResizeObserver in respective components should handle this, but for explicit control:
   setTimeout(() => {
     if (canvasRef.value && canvasRef.value.canvasContainer && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
       const stage = canvasRef.value.stageRef.getStage();
@@ -303,7 +354,7 @@ watch([leftPanelPercentage, activeFullscreenPanel], () => {
     if (taskInputEditorRef.value && taskInputEditorRef.value.view) {
       taskInputEditorRef.value.view.requestMeasure();
     }
-  }, 50); // Small delay to allow panel width to update in DOM
+  }, 50);
 });
 </script>
 
@@ -312,15 +363,12 @@ body {
   margin: 0;
   overflow: hidden;
 }
-
 .flex-grow-0 {
   flex-grow: 0;
 }
-
 .flex-shrink-0 {
   flex-shrink: 0;
 }
-
 .transition-width {
   transition: width 0.1s ease-in-out;
 }
