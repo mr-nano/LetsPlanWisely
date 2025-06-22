@@ -239,7 +239,7 @@ const toggleFullscreen = (panel) => {
   // Trigger Konva redraw after panel transition
   // A small delay ensures the DOM has updated its sizes
   setTimeout(() => {
-    if (canvasRef.value && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
+    if (canvasRef.value && canvasRef.value.canvasContainer && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
       const stage = canvasRef.value.stageRef.getStage();
       if (stage) {
         stage.width(canvasRef.value.canvasContainer.value.offsetWidth);
