@@ -8,11 +8,18 @@
         </template>
         </v-layer>
     </v-stage>
+    <TaskHoverCard
+      :task="hoveredTask"
+      :mouse-position="mousePosition"
+      :container-rect="containerBoundingRect"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch, computed, defineExpose } from 'vue';
+import TaskHoverCard from './TaskHoverCard.vue'; 
+
 // No direct named imports for Stage, Layer, Rect, Line as they are globally registered by app.use(VueKonva)
 
 // --- PROPS ---
@@ -34,6 +41,11 @@ const layerRef = ref(null);
 
 const scale = ref(1); // For zoom
 const position = ref({ x: 0, y: 0 }); // For pan
+
+const hoveredTask = ref(null); // Stores the task object currently hovered
+const mousePosition = ref({ x: 0, y: 0 }); // Stores the current mouse position relative to canvasContainer
+const containerBoundingRect = ref(null); // Stores the bounding rectangle of the canvasContainer div
+
 
 // --- CONFIGURATION CONSTANTS (Adjust these for aesthetics) ---
 const TASK_HEIGHT = 40;
@@ -121,6 +133,8 @@ const zoomToFit = () => {
   position.value = { x: newPosX, y: newPosY };
 
   stage.batchDraw();
+
+  hoveredTask.value = null;
 };
 
 /**
@@ -218,6 +232,9 @@ const getTaskRectConfig = (task) => {
     strokeWidth: 2,
     cornerRadius: 5,
     name: `task-rect-${task.name}`, // Unique name for potential interaction
+    onMouseenter: (e) => handleMouseEnter(e, task),
+    onMouseleave: handleMouseLeave,
+    onMousemove: handleMouseMove,
   };
 };
 
@@ -272,6 +289,8 @@ const getTaskTextConfig = (task) => {
 
 // --- EVENTS ---
 
+// --- EVENTS ---
+
 // Handle wheel for zooming
 const handleWheel = (e) => {
   e.evt.preventDefault(); // Prevent page scroll
@@ -304,8 +323,41 @@ const handleWheel = (e) => {
     // stageRef.value.getStage().width(canvasContainer.value.offsetWidth / newScale);
     // stageRef.value.getStage().height(canvasContainer.value.offsetHeight / newScale);
   }
+  // --- ADD THIS LINE: Hide hover card on zoom/pan ---
+  hoveredTask.value = null; 
+  // --- END ADD ---
 };
 
+// --- ADD THESE NEW FUNCTIONS ---
+
+// Handle mouse entering a task rectangle
+const handleMouseEnter = (e, task) => {
+  hoveredTask.value = task;
+  // Update mouse position immediately
+  handleMouseMove(e); 
+};
+
+// Handle mouse leaving a task rectangle
+const handleMouseLeave = () => {
+  hoveredTask.value = null;
+};
+
+// Handle mouse movement (for precise hover card positioning)
+const handleMouseMove = (e) => {
+  if (hoveredTask.value && canvasContainer.value) {
+    // Get the bounding rectangle of the canvas container once per hover, or on resize
+    if (!containerBoundingRect.value) {
+        containerBoundingRect.value = canvasContainer.value.getBoundingClientRect();
+    }
+    
+    // Calculate mouse position relative to the canvas container's viewport
+    mousePosition.value = {
+      x: e.evt.clientX - containerBoundingRect.value.left,
+      y: e.evt.clientY - containerBoundingRect.value.top,
+    };
+  }
+};
+// --- END NEW FUNCTIONS ---
 
 // --- WATCHERS ---
 watch(
@@ -330,6 +382,9 @@ watch(
 onMounted(() => {
   const resizeObserver = new ResizeObserver(() => {
     if (stageRef.value && canvasContainer.value) {
+      // Update container bounding rect on resize
+      containerBoundingRect.value = canvasContainer.value.getBoundingClientRect();
+
       // Set Konva stage width/height to fill container, then scale it
       stageRef.value.getStage().width(canvasContainer.value.offsetWidth);
       stageRef.value.getStage().height(canvasContainer.value.offsetHeight);
