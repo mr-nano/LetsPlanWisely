@@ -22,6 +22,8 @@ const emit = defineEmits(['update:markdown']);
 const editorContainer = ref(null);
 let view = null; // CodeMirror EditorView instance
 const linterCompartment = new Compartment(); // To update linting diagnostics dynamically
+const lineWrappingCompartment = new Compartment(); // New compartment for line wrapping
+
 
 // Initial content for the editor
 const initialMarkdown = `Task "Develop UI" "Implement frontend" "M" "Code Backend"
@@ -60,6 +62,7 @@ onMounted(() => {
         autocompletion({ override: [myCompletion] }), // Use imported myCompletion
         lintGutter(),
         linterCompartment.of(linter(lintSource)),
+        lineWrappingCompartment.of([]), // Enable line wrapping
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             emit('update:markdown', update.state.doc.toString());
@@ -115,9 +118,19 @@ const setLintDiagnostics = (errors) => {
   }
 };
 
+const setWordWrapping = (enable) => {
+  if (view) {
+    view.dispatch({
+      effects: lineWrappingCompartment.reconfigure(enable ? EditorView.lineWrapping : []),
+    });
+  }
+};
+
+
 defineExpose({
   setAvailableTaskNames,
   setLintDiagnostics,
+  setWordWrapping,
 });
 </script>
 

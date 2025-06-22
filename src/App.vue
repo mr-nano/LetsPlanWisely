@@ -13,6 +13,13 @@
       <div class="flex items-center justify-between mb-4 text-gray-700 p-4">
         <h2 class="text-xl font-semibold">Markdown Input</h2>
         <div class="flex items-center">
+          <button
+            @click="toggleWordWrap"
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 mr-2"
+            :title="isWordWrappingEnabled ? 'Disable Word Wrap' : 'Enable Word Wrap'"
+          >
+            <span v-if="isWordWrappingEnabled">↔</span> <span v-else>⟷</span> </button>
+
           <button 
             @click="toggleFullscreen('left')" 
             class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200"
@@ -94,6 +101,7 @@ const taskInputEditorRef = ref(null);
 const canvasRef = ref(null);
 const leftPanel = ref(null);
 const rightPanel = ref(null);
+const isWordWrappingEnabled = ref(false);
 
 // Panel resizing state
 const initialLeftPanelWidth = parseFloat(localStorage.getItem('leftPanelWidth') || '50'); // Store as number
@@ -170,6 +178,15 @@ const handleMarkdownUpdate = (markdown) => {
   }
 
   errors.value = currentErrors;
+};
+
+// New method to toggle word wrapping
+const toggleWordWrap = () => {
+  isWordWrappingEnabled.value = !isWordWrappingEnabled.value;
+  // Call the exposed method on the child component
+  if (taskInputEditorRef.value) {
+    taskInputEditorRef.value.setWordWrapping(isWordWrappingEnabled.value);
+  }
 };
 
 // --- Resizing Logic ---
