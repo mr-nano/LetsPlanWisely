@@ -299,12 +299,12 @@ watch(() => errors.value, (newErrors) => {
 
 // Watch for panel width changes to trigger Konva resize and CodeMirror recalculation
 watch([leftPanelPercentage, activeFullscreenPanel], () => {
-    // This watcher combines the effects that were in separate watch blocks for robustness
+    // This watcher combines the effects that are in separate watch blocks for robustness
     // The Konva and CodeMirror resize logic is now consolidated in toggleFullscreen for explicit triggers.
     // However, for manual resize (not fullscreen), CodeMirror and Konva might still need a nudge.
     // The ResizeObserver in respective components should handle this, but for explicit control:
     setTimeout(() => {
-        if (canvasRef.value && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
+        if (canvasRef.value && canvasRef.value.canvasContainer && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
             const stage = canvasRef.value.stageRef.getStage();
             if (stage) {
                 stage.width(canvasRef.value.canvasContainer.value.offsetWidth);
