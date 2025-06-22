@@ -4,10 +4,25 @@
       ref="leftPanel"
       class="flex flex-col border-r border-gray-200 transition-width duration-100 ease-in-out"
       :style="{ width: leftPanelWidth }"
+      :class="{
+        'absolute inset-0 w-full h-full z-40': activeFullscreenPanel === 'left',
+        'hidden': activeFullscreenPanel === 'right',
+        'flex-grow': activeFullscreenPanel === null // Only flex-grow in split mode
+      }"
     >
       <div class="flex items-center justify-between mb-4 text-gray-700 p-4">
         <h2 class="text-xl font-semibold">Markdown Input</h2>
+        <div class="flex items-center">
+          <button 
+            @click="toggleFullscreen('left')" 
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200"
+            :title="activeFullscreenPanel === 'left' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Editor (F11)'"
+          >
+            <span v-if="activeFullscreenPanel !== 'left'">⛶</span>
+            <span v-else>✕</span>
+          </button>
         </div>
+      </div>
       <TaskInputEditor
         ref="taskInputEditorRef"
         class="flex-grow min-h-0 px-4"
@@ -27,6 +42,7 @@
     </div>
 
     <div
+      v-if="activeFullscreenPanel === null"
       class="w-2 h-full cursor-ew-resize bg-gray-300 hover:bg-blue-400 transition-colors duration-100 ease-in-out flex-shrink-0"
       style="min-width: 8px;"
       @mousedown="startResizing"
@@ -36,10 +52,25 @@
       ref="rightPanel"
       class="flex flex-col transition-width duration-100 ease-in-out"
       :style="{ width: rightPanelWidth }"
+      :class="{
+        'absolute inset-0 w-full h-full z-40': activeFullscreenPanel === 'right',
+        'hidden': activeFullscreenPanel === 'left',
+        'flex-grow': activeFullscreenPanel === null // Only flex-grow in split mode
+      }"
     >
       <div class="flex items-center justify-between mb-4 text-gray-700 p-4">
         <h2 class="text-xl font-semibold">Task Visualization</h2>
+        <div class="flex items-center">
+          <button 
+            @click="toggleFullscreen('right')" 
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200"
+            :title="activeFullscreenPanel === 'right' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Visualization (F11)'"
+          >
+            <span v-if="activeFullscreenPanel !== 'right'">⛶</span>
+            <span v-else>✕</span>
+          </button>
         </div>
+      </div>
       <TaskVisualizationCanvas
         ref="canvasRef"
         class="flex-grow min-h-0 mx-4 mb-4 bg-white border border-gray-200 rounded shadow-inner overflow-hidden"
@@ -69,7 +100,8 @@ const initialLeftPanelWidth = parseFloat(localStorage.getItem('leftPanelWidth') 
 const leftPanelPercentage = ref(initialLeftPanelWidth);
 const isResizing = ref(false);
 
-// Removed fullscreen state (activeFullscreenPanel)
+// Fullscreen state (CSS-driven, not browser API)
+const activeFullscreenPanel = ref(null); // 'left', 'right', or null
 
 const parsedData = ref({
   tasks: [],
@@ -96,8 +128,17 @@ const errorClass = computed(() => {
   }
 });
 
-const leftPanelWidth = computed(() => `${leftPanelPercentage.value}%`);
-const rightPanelWidth = computed(() => `${100 - leftPanelPercentage.value}%`);
+const leftPanelWidth = computed(() => {
+  if (activeFullscreenPanel.value === 'left') return '100%';
+  if (activeFullscreenPanel.value === 'right') return '0px'; // Hide when other panel is fullscreen
+  return `${leftPanelPercentage.value}%`;
+});
+
+const rightPanelWidth = computed(() => {
+  if (activeFullscreenPanel.value === 'right') return '100%';
+  if (activeFullscreenPanel.value === 'left') return '0px'; // Hide when other panel is fullscreen
+  return `${100 - leftPanelPercentage.value}%`;
+});
 
 // --- METHODS ---
 const handleMarkdownUpdate = (markdown) => {
@@ -131,12 +172,11 @@ const handleMarkdownUpdate = (markdown) => {
   errors.value = currentErrors;
 };
 
-// --- Resizing Logic (Cleaned and Focused) ---
+// --- Resizing Logic ---
 const startResizing = (e) => {
-  console.log('Mousedown event triggered on divider');
-  e.preventDefault(); // Prevent default drag behavior (e.g., image drag)
+  if (activeFullscreenPanel.value !== null) return; // Prevent resizing in fullscreen
+  e.preventDefault();
   isResizing.value = true;
-  console.log('isResizing set to true');
   document.addEventListener('mousemove', resizePanels);
   document.addEventListener('mouseup', stopResizing);
   document.body.style.cursor = 'ew-resize';
@@ -146,13 +186,12 @@ const startResizing = (e) => {
 const resizePanels = (e) => {
   if (!isResizing.value || !leftPanel.value || !rightPanel.value) return;
 
-  const container = leftPanel.value.parentElement;
-  if (!container) return; // Should not happen with flex container
+  const container = leftPanel.value.parentElement; // Assumes parent of leftPanel is the main flex container
+  if (!container) return;
 
   const containerRect = container.getBoundingClientRect();
   const containerWidth = containerRect.width;
 
-  // Calculate new width for left panel based on mouse X position relative to container
   let newLeftWidthPx = e.clientX - containerRect.left;
   let newLeftPercentage = (newLeftWidthPx / containerWidth) * 100;
 
@@ -171,7 +210,38 @@ const stopResizing = () => {
   document.body.style.userSelect = 'auto';
 };
 
-// Removed all fullscreen related methods (toggleFullscreen, exitFullscreen, handleFullscreenChange)
+// --- Fullscreen Logic (CSS-driven) ---
+const toggleFullscreen = (panel) => {
+  if (activeFullscreenPanel.value === panel) {
+    // If clicking on the already active panel, exit fullscreen
+    activeFullscreenPanel.value = null;
+  } else {
+    // Enter fullscreen for the selected panel
+    activeFullscreenPanel.value = panel;
+  }
+  // Trigger Konva redraw after panel transition
+  // A small delay ensures the DOM has updated its sizes
+  setTimeout(() => {
+    if (canvasRef.value && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
+      const stage = canvasRef.value.stageRef.getStage();
+      if (stage) {
+        stage.width(canvasRef.value.canvasContainer.value.offsetWidth);
+        stage.height(canvasRef.value.canvasContainer.value.offsetHeight);
+        stage.batchDraw();
+        // Optional: Reset Konva pan/zoom when entering/exiting fullscreen for a clean view
+        stage.scaleX(1);
+        stage.scaleY(1);
+        stage.x(0);
+        stage.y(0);
+        stage.draw();
+      }
+    }
+    // Also trigger CodeMirror resize if it's the editor that went fullscreen
+    if (taskInputEditorRef.value && taskInputEditorRef.value.view) {
+        taskInputEditorRef.value.view.requestMeasure(); // Forces CodeMirror to recalculate its dimensions
+    }
+  }, 100); // Small delay for CSS transitions to apply
+};
 
 // --- LIFECYCLE HOOKS ---
 onMounted(() => {
@@ -188,13 +258,9 @@ S:2
 XL:15
 `;
   handleMarkdownUpdate(initialMarkdown);
-
-  // Removed fullscreen event listeners
 });
 
 onBeforeUnmount(() => {
-  // Removed fullscreen event listeners cleanup
-  // Ensure resize listeners are cleaned up if somehow still active
   document.removeEventListener('mousemove', resizePanels);
   document.removeEventListener('mouseup', stopResizing);
 });
@@ -214,9 +280,26 @@ watch(() => errors.value, (newErrors) => {
   }
 }, { immediate: true, deep: true });
 
-// No specific watchers for fullscreen or Konva redraw logic related to fullscreen
-// The ResizeObserver in TaskVisualizationCanvas.vue should handle the Konva canvas resizing
-// when its parent container (`rightPanel`) changes size due to `leftPanelPercentage` updates.
+// Watch for panel width changes to trigger Konva resize and CodeMirror recalculation
+watch([leftPanelPercentage, activeFullscreenPanel], () => {
+    // This watcher combines the effects that were in separate watch blocks for robustness
+    // The Konva and CodeMirror resize logic is now consolidated in toggleFullscreen for explicit triggers.
+    // However, for manual resize (not fullscreen), CodeMirror and Konva might still need a nudge.
+    // The ResizeObserver in respective components should handle this, but for explicit control:
+    setTimeout(() => {
+        if (canvasRef.value && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
+            const stage = canvasRef.value.stageRef.getStage();
+            if (stage) {
+                stage.width(canvasRef.value.canvasContainer.value.offsetWidth);
+                stage.height(canvasRef.value.canvasContainer.value.offsetHeight);
+                stage.batchDraw();
+            }
+        }
+        if (taskInputEditorRef.value && taskInputEditorRef.value.view) {
+            taskInputEditorRef.value.view.requestMeasure();
+        }
+    }, 50); // Small delay to allow panel width to update in DOM
+});
 </script>
 
 <style>
