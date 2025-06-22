@@ -1,46 +1,36 @@
 <template>
   <div class="flex h-screen bg-gray-50 font-sans text-gray-800 overflow-hidden">
-    <div
-      ref="leftPanel"
-      class="flex flex-col border-r border-gray-200 transition-width duration-100 ease-in-out"
-      :style="{ width: leftPanelWidth }"
-      :class="{
+    <div ref="leftPanel" class="flex flex-col border-r border-gray-200 transition-width duration-100 ease-in-out"
+      :style="{ width: leftPanelWidth }" :class="{
         'absolute inset-0 w-full h-full z-40': activeFullscreenPanel === 'left',
         'hidden': activeFullscreenPanel === 'right',
         'flex-grow': activeFullscreenPanel === null // Only flex-grow in split mode
-      }"
-    >
+      }">
       <div class="flex items-center justify-between mb-4 text-gray-700 p-4">
         <h2 class="text-xl font-semibold">Markdown Input</h2>
         <div class="flex items-center">
-          <button
-            @click="toggleWordWrap"
+          <button @click="toggleWordWrap"
             class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 mr-2"
-            :title="isWordWrappingEnabled ? 'Disable Word Wrap' : 'Enable Word Wrap'"
-          >
+            :title="isWordWrappingEnabled ? 'Disable Word Wrap' : 'Enable Word Wrap'">
             <span v-if="isWordWrappingEnabled">↔</span> <span v-else>⟷</span> </button>
 
-          <button 
-            @click="toggleFullscreen('left')" 
+          <button @click="toggleFullscreen('left')"
             class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200"
-            :title="activeFullscreenPanel === 'left' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Editor (F11)'"
-          >
+            :title="activeFullscreenPanel === 'left' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Editor (F11)'">
             <span v-if="activeFullscreenPanel !== 'left'">⛶</span>
             <span v-else>✕</span>
           </button>
         </div>
       </div>
-      <TaskInputEditor
-        ref="taskInputEditorRef"
-        class="flex-grow min-h-0 px-4"
-        @update:markdown="handleMarkdownUpdate"
-      />
+      <TaskInputEditor ref="taskInputEditorRef" class="flex-grow min-h-0 px-4"
+        @update:markdown="handleMarkdownUpdate" />
       <div class="mt-4 p-2 rounded mx-4 mb-4" :class="errorClass">
         <p v-if="errors.length === 0" class="text-green-800">No parsing errors or warnings.</p>
         <div v-else>
           <p class="font-semibold text-red-800">Parsing Issues:</p>
           <ul class="list-disc pl-5 text-sm">
-            <li v-for="(error, index) in errors" :key="index" :class="error.type === 'error' ? 'text-red-700' : 'text-yellow-700'">
+            <li v-for="(error, index) in errors" :key="index"
+              :class="error.type === 'error' ? 'text-red-700' : 'text-yellow-700'">
               {{ error.message }} <span v-if="error.line !== 'N/A'">(Line: {{ error.line }})</span>
             </li>
           </ul>
@@ -48,45 +38,36 @@
       </div>
     </div>
 
-    <div
-      v-if="activeFullscreenPanel === null"
+    <div v-if="activeFullscreenPanel === null"
       class="w-2 h-full cursor-ew-resize bg-gray-300 hover:bg-blue-400 transition-colors duration-100 ease-in-out flex-shrink-0"
-      style="min-width: 8px;"
-      @mousedown="startResizing"
-    ></div>
+      style="min-width: 8px;" @mousedown="startResizing"></div>
 
-    <div
-      ref="rightPanel"
-      class="flex flex-col transition-width duration-100 ease-in-out"
-      :style="{ width: rightPanelWidth }"
-      :class="{
+    <div ref="rightPanel" class="flex flex-col transition-width duration-100 ease-in-out"
+      :style="{ width: rightPanelWidth }" :class="{
         'absolute inset-0 w-full h-full z-40': activeFullscreenPanel === 'right',
         'hidden': activeFullscreenPanel === 'left',
         'flex-grow': activeFullscreenPanel === null // Only flex-grow in split mode
-      }"
-    >
+      }">
       <div class="flex items-center justify-between mb-4 text-gray-700 p-4">
         <h2 class="text-xl font-semibold">Task Visualization</h2>
         <div class="flex items-center">
-          <button 
-            @click="toggleFullscreen('right')" 
+          <button @click="zoomToFitCanvas"
+            class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200 mr-2" title="Zoom to Fit">
+            <span class="transform scale-x-[-1]">&#x21F2;</span> </button>
+          <button @click="toggleFullscreen('right')"
             class="w-8 h-8 flex items-center justify-center text-lg rounded hover:bg-gray-200"
-            :title="activeFullscreenPanel === 'right' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Visualization (F11)'"
-          >
+            :title="activeFullscreenPanel === 'right' ? 'Exit Fullscreen (Esc)' : 'Toggle Fullscreen Visualization (F11)'">
             <span v-if="activeFullscreenPanel !== 'right'">⛶</span>
             <span v-else>✕</span>
           </button>
         </div>
       </div>
-      <TaskVisualizationCanvas
-        ref="canvasRef"
+      <TaskVisualizationCanvas ref="canvasRef"
         class="flex-grow min-h-0 mx-4 mb-4 bg-white border border-gray-200 rounded shadow-inner overflow-hidden"
-        :scheduledTasks="scheduledTasks"
-        :errors="errors"
-      />
+        :scheduledTasks="scheduledTasks" :errors="errors" />
     </div>
-    
-    </div>
+
+  </div>
 </template>
 
 <script setup>
@@ -164,17 +145,17 @@ const handleMarkdownUpdate = (markdown) => {
   const currentErrors = [...parseResult.errors];
 
   if (parseResult.errors.filter(e => e.type === 'error').length > 0) {
-      scheduledTasks.value = [];
+    scheduledTasks.value = [];
   } else {
-      const scheduleResult = scheduleTasks(
-          parsedData.value.tasks,
-          parsedData.value.dependencies,
-          parsedData.value.globalBandwidth,
-          parsedData.value.taskGroups
-      );
+    const scheduleResult = scheduleTasks(
+      parsedData.value.tasks,
+      parsedData.value.dependencies,
+      parsedData.value.globalBandwidth,
+      parsedData.value.taskGroups
+    );
 
-      scheduledTasks.value = scheduleResult.scheduledTasks;
-      currentErrors.push(...scheduleResult.errors);
+    scheduledTasks.value = scheduleResult.scheduledTasks;
+    currentErrors.push(...scheduleResult.errors);
   }
 
   errors.value = currentErrors;
@@ -227,6 +208,13 @@ const stopResizing = () => {
   document.body.style.userSelect = 'auto';
 };
 
+
+const zoomToFitCanvas = () => {
+  if (canvasRef.value && canvasRef.value.zoomToFit) {
+    canvasRef.value.zoomToFit();
+  }
+};
+
 // --- Fullscreen Logic (CSS-driven) ---
 const toggleFullscreen = (panel) => {
   if (activeFullscreenPanel.value === panel) {
@@ -255,7 +243,7 @@ const toggleFullscreen = (panel) => {
     }
     // Also trigger CodeMirror resize if it's the editor that went fullscreen
     if (taskInputEditorRef.value && taskInputEditorRef.value.view) {
-        taskInputEditorRef.value.view.requestMeasure(); // Forces CodeMirror to recalculate its dimensions
+      taskInputEditorRef.value.view.requestMeasure(); // Forces CodeMirror to recalculate its dimensions
     }
   }, 100); // Small delay for CSS transitions to apply
 };
@@ -299,23 +287,23 @@ watch(() => errors.value, (newErrors) => {
 
 // Watch for panel width changes to trigger Konva resize and CodeMirror recalculation
 watch([leftPanelPercentage, activeFullscreenPanel], () => {
-    // This watcher combines the effects that are in separate watch blocks for robustness
-    // The Konva and CodeMirror resize logic is now consolidated in toggleFullscreen for explicit triggers.
-    // However, for manual resize (not fullscreen), CodeMirror and Konva might still need a nudge.
-    // The ResizeObserver in respective components should handle this, but for explicit control:
-    setTimeout(() => {
-        if (canvasRef.value && canvasRef.value.canvasContainer && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
-            const stage = canvasRef.value.stageRef.getStage();
-            if (stage) {
-                stage.width(canvasRef.value.canvasContainer.value.offsetWidth);
-                stage.height(canvasRef.value.canvasContainer.value.offsetHeight);
-                stage.batchDraw();
-            }
-        }
-        if (taskInputEditorRef.value && taskInputEditorRef.value.view) {
-            taskInputEditorRef.value.view.requestMeasure();
-        }
-    }, 50); // Small delay to allow panel width to update in DOM
+  // This watcher combines the effects that are in separate watch blocks for robustness
+  // The Konva and CodeMirror resize logic is now consolidated in toggleFullscreen for explicit triggers.
+  // However, for manual resize (not fullscreen), CodeMirror and Konva might still need a nudge.
+  // The ResizeObserver in respective components should handle this, but for explicit control:
+  setTimeout(() => {
+    if (canvasRef.value && canvasRef.value.canvasContainer && canvasRef.value.canvasContainer.value && canvasRef.value.stageRef) {
+      const stage = canvasRef.value.stageRef.getStage();
+      if (stage) {
+        stage.width(canvasRef.value.canvasContainer.value.offsetWidth);
+        stage.height(canvasRef.value.canvasContainer.value.offsetHeight);
+        stage.batchDraw();
+      }
+    }
+    if (taskInputEditorRef.value && taskInputEditorRef.value.view) {
+      taskInputEditorRef.value.view.requestMeasure();
+    }
+  }, 50); // Small delay to allow panel width to update in DOM
 });
 </script>
 
@@ -324,12 +312,15 @@ body {
   margin: 0;
   overflow: hidden;
 }
+
 .flex-grow-0 {
-    flex-grow: 0;
+  flex-grow: 0;
 }
+
 .flex-shrink-0 {
-    flex-shrink: 0;
+  flex-shrink: 0;
 }
+
 .transition-width {
   transition: width 0.1s ease-in-out;
 }

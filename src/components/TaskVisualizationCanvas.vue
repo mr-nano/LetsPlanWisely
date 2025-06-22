@@ -12,7 +12,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed, defineExpose } from 'vue';
 // No direct named imports for Stage, Layer, Rect, Line as they are globally registered by app.use(VueKonva)
 
 // --- PROPS ---
@@ -75,6 +75,52 @@ const hasError = (taskName) => {
     error.type === 'error' &&
     (error.message.includes(`"${taskName}"`) || error.message.includes(`"${taskName}"`)) // Basic check for task name in error message
   );
+};
+
+const zoomToFit = () => {
+  if (!stageRef.value || !canvasContainer.value || tasksWithLayout.value.length === 0) {
+    return;
+  }
+
+  const stage = stageRef.value.getStage();
+  const containerWidth = canvasContainer.value.offsetWidth;
+  const containerHeight = canvasContainer.value.offsetHeight;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  tasksWithLayout.value.forEach(task => {
+    minX = Math.min(minX, task.x);
+    minY = Math.min(minY, task.y);
+    maxX = Math.max(maxX, task.x + task.width);
+    maxY = Math.max(maxY, task.y + task.height);
+  });
+
+  const PADDING = 40; 
+  minX -= PADDING;
+  minY -= PADDING;
+  maxX += PADDING;
+  maxY += PADDING;
+
+  const contentWidth = maxX - minX;
+  const contentHeight = maxY - minY;
+
+  const scaleX = containerWidth / contentWidth;
+  const scaleY = containerHeight / contentHeight;
+  const newScale = Math.min(scaleX, scaleY, 1.5); // Cap maximum zoom
+
+  const centerX = minX + contentWidth / 2;
+  const centerY = minY + contentHeight / 2;
+
+  const newPosX = (containerWidth / 2) - (centerX * newScale);
+  const newPosY = (containerHeight / 2) - (centerY * newScale);
+
+  scale.value = newScale;
+  position.value = { x: newPosX, y: newPosY };
+
+  stage.batchDraw();
 };
 
 /**
@@ -295,6 +341,12 @@ onMounted(() => {
   });
   resizeObserver.observe(canvasContainer.value);
   onUnmounted(() => resizeObserver.disconnect());
+});
+
+defineExpose({
+  zoomToFit,
+  canvasContainer, // Expose for App.vue to access width/height
+  stageRef // Expose for App.vue to access Konva stage methods
 });
 </script>
 
