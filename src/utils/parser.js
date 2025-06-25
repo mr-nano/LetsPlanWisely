@@ -10,7 +10,7 @@ const TASK_LINE_REGEX = /^Task\s+"([^"]+)"(?:\s+"([^"]*)")?\s+"([^"]+)"(?:\s+"([
 const DURATION_LABEL_DEFINITION_REGEX = /^([A-Z]+):\s*(\d+(\.\d+)?)\s*#?.*$/;
 const GLOBAL_BANDWIDTH_REGEX = /^Global Bandwidth:\s*("unbound"|\d+)\s*#?.*$/;
 const TASK_GROUP_BANDWIDTH_REGEX = /^Task Group\s+(?:\[([^\]]+)\]|\/([^\/]+)\/)\s+bandwidth:\s*("unbound"|\d+)\s*#?.*$/;
-const DEPENDENCY_EXPLICIT_REGEX = /"([^"]+)"\s+(?:should happen before|depends on|should happen after)\s+"([^"]+)"\s*#?.*$/;
+const DEPENDENCY_EXPLICIT_REGEX = /"([^"]+)"\s+(should happen before|depends on|should happen after)\s+"([^"]+)"\s*#?.*$/;
 
 
 /**
@@ -123,14 +123,36 @@ function parseTaskGroupBandwidth(line) {
  * @param {string} line - The line of text to parse.
  * @returns {object|null} An object { source, target } if parsed successfully, otherwise null.
  */
+// src/utils/parser.js
+
+// src/utils/parser.js (Your updated parseExplicitDependency function)
 function parseExplicitDependency(line) {
     const match = line.match(DEPENDENCY_EXPLICIT_REGEX);
     if (match) {
-        // The regex captures "Task A" and "Task B" directly
-        return {
-            source: match[1].trim(),
-            target: match[2].trim()
-        };
+        const [, task1, relationship, task2] = match;
+        let source, target;
+
+        if (relationship === 'should happen before') {
+            // Task1 should happen before Task2 means Task1 -> Task2
+            source = task1.trim();
+            target = task2.trim();
+        } else if (relationship === 'depends on') {
+            // Task1 depends on Task2 means Task2 -> Task1
+            // So, Task2 is the SOURCE (predecessor), Task1 is the TARGET (successor)
+            source = task2.trim(); // CORRECTED: This makes 'Task B' the source
+            target = task1.trim(); // CORRECTED: This makes 'Task C' the target
+        } else if (relationship === 'should happen after') {
+            // Task1 should happen after Task2 means Task2 -> Task1
+            // So, Task2 is the SOURCE, Task1 is the TARGET
+            source = task2.trim();
+            target = task1.trim();
+        } else {
+            // Fallback (shouldn't be hit with correct regex)
+            source = task1.trim();
+            target = task2.trim();
+        }
+
+        return { source, target };
     }
     return null;
 }
