@@ -166,11 +166,24 @@ export function parseMarkdown(markdownInput) {
     const lines = markdownInput.split('\n').map(line => line.trim()).filter(line => line.length > 0 && !line.startsWith('//') && !line.startsWith('#'));
 
     const tasks = {}; // Use an object for quick lookup by name
-    const dependencies = []; // Stores { source, target }
+    const uniqueDependencies  = new Set(); // Stores { source, target }
     const durationLabels = {}; // Stores { label: value }
     let globalBandwidth = 'unbound'; // Default
     const taskGroups = []; // Stores parsed task group objects
     const errors = []; // Stores { line: string, message: string, type: 'error'|'warning' }
+
+    // Helper to add a dependency to the set
+    const addDependency = (source, target, originalLineNum = 'N/A') => { // Add originalLineNum parameter
+        if (source === target) {
+            errors.push({
+                line: originalLineNum, // Use provided line number for self-dependency error
+                message: `Task "${source}" cannot depend on itself.`,
+                type: 'error'
+            });
+            return;
+        }
+        uniqueDependencies.add(`${source}->${target}`);
+    };
 
     // First pass: Identify task definitions and explicit directives
     lines.forEach((line, index) => {
@@ -183,6 +196,7 @@ export function parseMarkdown(markdownInput) {
         // Try to parse as a task
         const task = parseTaskLine(effectiveLine);
         if (task) {
+            task.originalLineNum = originalLineNum;
             if (tasks[task.name]) {
                 errors.push({
                     line: originalLineNum,
@@ -199,7 +213,7 @@ export function parseMarkdown(markdownInput) {
         const labelDef = parseDurationLabelDefinition(effectiveLine);
         if (labelDef) {
             if (durationLabels[labelDef.label]) {
-                 errors.push({
+                errors.push({
                     line: originalLineNum,
                     message: `Duplicate definition for duration label "${labelDef.label}". The last definition will take precedence.`,
                     type: 'warning'
@@ -233,7 +247,7 @@ export function parseMarkdown(markdownInput) {
         // Try to parse as explicit dependency
         const explicitDep = parseExplicitDependency(effectiveLine);
         if (explicitDep) {
-            dependencies.push(explicitDep);
+            addDependency(explicitDep.source, explicitDep.target, originalLineNum); // Use addDependency
             return;
         }
 
@@ -248,15 +262,8 @@ export function parseMarkdown(markdownInput) {
     // Second pass: Process inline dependencies from parsed tasks and validate all dependencies
     Object.values(tasks).forEach(task => {
         task.dependencies.forEach(depName => {
-            if (task.name === depName) {
-                errors.push({
-                    line: 'N/A', // Cannot easily map back to original line for inline
-                    message: `Task "${task.name}" cannot depend on itself.`,
-                    type: 'error'
-                });
-                return;
-            }
-            dependencies.push({ source: depName, target: task.name });
+            // Call addDependency with the task's original line number for better error reporting
+            addDependency(depName, task.name, task.originalLineNum); // Inline: depName is source, task.name is target
         });
     });
 
@@ -270,7 +277,7 @@ export function parseMarkdown(markdownInput) {
             task.resolvedDuration = durationLabels[originalDuration];
         } else {
             errors.push({
-                line: 'N/A', // Can't easily map back to original line, would need to enhance parseTaskLine
+                line: task.originalLineNum || 'N/A', // Use task's stored line number if available
                 message: `Task "${task.name}" has an undefined duration label: "${originalDuration}".`,
                 type: 'error'
             });
@@ -282,17 +289,26 @@ export function parseMarkdown(markdownInput) {
     const definedTaskNames = new Set(Object.keys(tasks));
 
     // Validate explicit and inline dependencies
-    dependencies.forEach(dep => {
+    // Convert unique dependencies from Set to Array and then validate
+    const finalDependencies = Array.from(uniqueDependencies).map(depStr => {
+        const [source, target] = depStr.split('->');
+        return { source, target };
+    }).sort((a, b) => { // Optional: Sort for consistent test output order
+        if (a.source !== b.source) return a.source.localeCompare(b.source);
+        return a.target.localeCompare(b.target);
+    });
+
+    finalDependencies.forEach(dep => { // Iterate over the finalDependencies array
         if (!definedTaskNames.has(dep.source)) {
             errors.push({
-                line: 'N/A',
+                line: 'N/A', // Cannot easily map back to original line after deduplication
                 message: `Dependency source task "${dep.source}" is not defined.`,
                 type: 'error'
             });
         }
         if (!definedTaskNames.has(dep.target)) {
             errors.push({
-                line: 'N/A',
+                line: 'N/A', // Cannot easily map back to original line after deduplication
                 message: `Dependency target task "${dep.target}" is not defined.`,
                 type: 'error'
             });
@@ -318,7 +334,7 @@ export function parseMarkdown(markdownInput) {
     // Return tasks as an array for easier iteration in subsequent steps
     return {
         tasks: Object.values(tasks), // Convert map back to array
-        dependencies: dependencies,
+        dependencies: finalDependencies ,
         durationLabels: durationLabels,
         globalBandwidth: globalBandwidth,
         taskGroups: taskGroups,
