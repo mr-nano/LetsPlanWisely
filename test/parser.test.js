@@ -204,7 +204,7 @@ describe('parseMarkdown - Existing Functionality', () => {
         expect(result.dependencies).toEqual([
             { source: 'Code Backend', target: 'Develop UI' }, // Inline from "Develop UI"
             { source: 'Develop UI', target: 'Write Docs' } // Explicit
-            
+
         ]);
         expect(result.errors).toHaveLength(0);
     });
@@ -231,7 +231,10 @@ describe('parseMarkdown - Existing Functionality', () => {
     });
 
     it('should handle task depending on itself', () => {
-        const markdown = `Task "SelfDep" "Desc" "M" "SelfDep"`;
+        const markdown = `
+        M:1
+        Task "SelfDep" "Desc" "M" "SelfDep"
+        `;
         const result = parseMarkdown(markdown);
         expect(result.errors).toHaveLength(1);
         expect(result.errors[0]).toEqual(expect.objectContaining({
@@ -242,10 +245,12 @@ describe('parseMarkdown - Existing Functionality', () => {
 
     it('should validate all referenced tasks in dependencies', () => {
         const markdown = `
+        M:1
         Task "A" "" "M" "NonExistent"
         "NonExistent2" should happen before "A"
         `;
         const result = parseMarkdown(markdown);
+        console.log("Errors are",result.errors)
         expect(result.errors).toHaveLength(2);
         expect(result.errors[0].message).toContain('Dependency source task "NonExistent" is not defined.');
         expect(result.errors[1].message).toContain('Dependency source task "NonExistent2" is not defined.');
@@ -253,6 +258,7 @@ describe('parseMarkdown - Existing Functionality', () => {
 
     it('should validate task group identifiers', () => {
         const markdown = `
+        M:1
         Task "ExistingTask" "" "M"
         Task Group [ExistingTask, "NonExistentTask"] bandwidth: 1
         `;
@@ -263,6 +269,7 @@ describe('parseMarkdown - Existing Functionality', () => {
 
     it('should handle blank lines correctly', () => {
         const markdown = `
+        M:1
         Task "A" "Desc" "M"
 
         Task "B" "Desc" "M"
@@ -274,7 +281,7 @@ describe('parseMarkdown - Existing Functionality', () => {
 
     it('should parse comments at the end of a line', () => {
         const markdown = `
-        Task "Task A" "Desc" "M" # This is a comment
+        Task "Task A" "Desc" "L" # This is a comment
         L:10 // Another comment
         `;
         const result = parseMarkdown(markdown);
