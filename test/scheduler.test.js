@@ -105,6 +105,8 @@ describe('scheduleTasks - Core Functionality', () => {
         expect(errors[0].message).toContain('Circular dependency detected: Task A -> Task B -> Task A');
     });
 
+    // src/tests/scheduler.test.js
+
     it('should apply global bandwidth limit (e.g., 1) for sequential execution', () => {
         const tasks = [
             createTask('Task P', 3),
@@ -119,32 +121,18 @@ describe('scheduleTasks - Core Functionality', () => {
         expect(errors).toHaveLength(0);
         expect(scheduledTasks).toHaveLength(2);
 
+        // Find tasks in the scheduled output (order might vary, so find by name)
         const taskP = scheduledTasks.find(t => t.name === 'Task P');
         const taskQ = scheduledTasks.find(t => t.name === 'Task Q');
 
-        // Due to global bandwidth 1, tasks must run sequentially
-        // Sorting in scheduler prioritizes longer tasks, so P (3) might run first, then Q (2)
-        // Or vice-versa depending on how the initial queue is built if durations are equal.
-        // Let's test for correct sequential flow for either order
-        const actualStartTimes = {
-            'Task P': taskP.startTime,
-            'Task Q': taskQ.startTime,
-        };
-        const actualEndTimes = {
-            'Task P': taskP.endTime,
-            'Task Q': taskQ.endTime,
-        };
-
-        if (taskP.startTime === 0) {
-            expect(taskP.endTime).toBe(3);
-            expect(taskQ.startTime).toBe(3); // Q starts after P finishes
-            expect(taskQ.endTime).toBe(5);
-        } else { // Q started at 0
-            expect(taskQ.endTime).toBe(2);
-            expect(taskP.startTime).toBe(2); // P starts after Q finishes
-            expect(taskP.endTime).toBe(5);
-        }
+        // Due to global bandwidth 1 AND the scheduler's priority for longer tasks,
+        // Task P (duration 3) should start first, then Task Q (duration 2).
+        expect(taskP.startTime).toBe(0);
+        expect(taskP.endTime).toBe(3);
+        expect(taskQ.startTime).toBe(3); // Task Q starts exactly when Task P finishes
+        expect(taskQ.endTime).toBe(5);   // Task Q ends after its duration (3 + 2 = 5)
     });
+
 
     it('should apply task group bandwidth limit for list type', () => {
         const tasks = [
