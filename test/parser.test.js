@@ -102,13 +102,14 @@ describe('parseMarkdown - Existing Functionality', () => {
         const markdown = `
         Task "Task A" "Desc" "M"
         Task "Task B" "Desc" "M"
-        Task Group ["Task A", "Task B"] bandwidth: 3
+        Task Group "Development Team" ["Task A", "Task B"] bandwidth: 3
         M:5
         `;
         const result = parseMarkdown(markdown);
         expect(result.taskGroups).toHaveLength(1);
         expect(result.taskGroups[0]).toEqual({
             type: 'list',
+            name: 'Development Team',
             identifiers: ['Task A', 'Task B'],
             bandwidth: 3,
         });
@@ -116,13 +117,109 @@ describe('parseMarkdown - Existing Functionality', () => {
     });
 
     it('should parse task group by regex', () => {
+        const markdown = `Task Group "Backend Services" /backend-*/ bandwidth: "unbound"`;
+        const result = parseMarkdown(markdown);
+        expect(result.taskGroups).toHaveLength(1);
+        expect(result.taskGroups[0]).toEqual({
+            type: 'regex',
+            name: 'Backend Services',
+            identifiers: ['backend-*'],
+            bandwidth: 'unbound',
+        });
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should parse task group without name (backward compatibility)', () => {
+        const markdown = `
+        Task "Task A" "Desc" "M"
+        Task "Task B" "Desc" "M"
+        Task Group ["Task A", "Task B"] bandwidth: 3
+        M:5
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.taskGroups).toHaveLength(1);
+        expect(result.taskGroups[0]).toEqual({
+            type: 'list',
+            name: 'Unnamed Group', // Default name when none provided
+            identifiers: ['Task A', 'Task B'],
+            bandwidth: 3,
+        });
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should parse task group by regex without name (backward compatibility)', () => {
         const markdown = `Task Group /backend-*/ bandwidth: "unbound"`;
         const result = parseMarkdown(markdown);
         expect(result.taskGroups).toHaveLength(1);
         expect(result.taskGroups[0]).toEqual({
             type: 'regex',
+            name: 'Unnamed Group', // Default name when none provided
             identifiers: ['backend-*'],
             bandwidth: 'unbound',
+        });
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should parse multiple task groups with different names', () => {
+        const markdown = `
+        Task "Frontend Task" "Desc" "M"
+        Task "Backend Task" "Desc" "M"
+        Task "API Task" "Desc" "M"
+        Task "Database Task" "Desc" "M"
+        
+        Task Group "Frontend Team" ["Frontend Task"] bandwidth: 2
+        Task Group "Backend Team" ["Backend Task", "API Task"] bandwidth: 3
+        Task Group "Database Team" /Database*/ bandwidth: 1
+        
+        M:5
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.taskGroups).toHaveLength(3);
+        expect(result.taskGroups[0]).toEqual({
+            type: 'list',
+            name: 'Frontend Team',
+            identifiers: ['Frontend Task'],
+            bandwidth: 2,
+        });
+        expect(result.taskGroups[1]).toEqual({
+            type: 'list',
+            name: 'Backend Team',
+            identifiers: ['Backend Task', 'API Task'],
+            bandwidth: 3,
+        });
+        expect(result.taskGroups[2]).toEqual({
+            type: 'regex',
+            name: 'Database Team',
+            identifiers: ['Database*'],
+            bandwidth: 1,
+        });
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should handle malformed task group syntax with error', () => {
+        const markdown = `Task Group "Invalid Group" bandwidth: 3`;
+        const result = parseMarkdown(markdown);
+        expect(result.taskGroups).toHaveLength(0);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toEqual(expect.objectContaining({
+            type: 'error',
+            message: expect.stringContaining('Unrecognized or malformed line syntax'),
+        }));
+    });
+
+    it('should handle task group with empty name', () => {
+        const markdown = `
+        Task "Task A" "Desc" "M"
+        Task Group "" ["Task A"] bandwidth: 3
+        M:5
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.taskGroups).toHaveLength(1);
+        expect(result.taskGroups[0]).toEqual({
+            type: 'list',
+            name: 'Unnamed Group', // Should default to unnamed when empty string provided
+            identifiers: ['Task A'],
+            bandwidth: 3,
         });
         expect(result.errors).toHaveLength(0);
     });
@@ -191,7 +288,7 @@ describe('parseMarkdown - Existing Functionality', () => {
         S:2
         XL:15
 
-        Task Group ["Develop UI", "Code Backend"] bandwidth: 1
+        Task Group "Development Team" ["Develop UI", "Code Backend"] bandwidth: 1
         `;
         const result = parseMarkdown(markdown);
 
@@ -201,6 +298,12 @@ describe('parseMarkdown - Existing Functionality', () => {
         expect(result.durationLabels).toEqual({ L: 10, M: 5, S: 2, XL: 15 });
         expect(result.globalBandwidth).toBe(2);
         expect(result.taskGroups).toHaveLength(1);
+        expect(result.taskGroups[0]).toEqual({
+            type: 'list',
+            name: 'Development Team',
+            identifiers: ['Develop UI', 'Code Backend'],
+            bandwidth: 1,
+        });
         expect(result.dependencies).toEqual([
             { source: 'Code Backend', target: 'Develop UI' }, // Inline from "Develop UI"
             { source: 'Develop UI', target: 'Write Docs' } // Explicit
@@ -260,7 +363,7 @@ describe('parseMarkdown - Existing Functionality', () => {
         const markdown = `
         M:1
         Task "ExistingTask" "" "M"
-        Task Group [ExistingTask, "NonExistentTask"] bandwidth: 1
+        Task Group "Test Group" [ExistingTask, "NonExistentTask"] bandwidth: 1
         `;
         const result = parseMarkdown(markdown);
         expect(result.errors).toHaveLength(1);

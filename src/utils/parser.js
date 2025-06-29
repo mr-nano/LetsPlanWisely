@@ -9,7 +9,7 @@
 const TASK_LINE_REGEX = /^Task\s+"([^"]+)"(?:\s+"([^"]*)")?\s+"([^"]+)"(?:\s+"([^"]*)")?\s*#?.*$/;
 const DURATION_LABEL_DEFINITION_REGEX = /^([A-Z]+):\s*(\d+(\.\d+)?)\s*#?.*$/;
 const GLOBAL_BANDWIDTH_REGEX = /^Global Bandwidth:\s*("unbound"|\d+)\s*#?.*$/;
-const TASK_GROUP_BANDWIDTH_REGEX = /^Task Group\s+(?:\[([^\]]+)\]|\/([^\/]+)\/)\s+bandwidth:\s*("unbound"|\d+)\s*#?.*$/;
+const TASK_GROUP_BANDWIDTH_REGEX = /^Task Group\s+(?:"([^"]*)"\s+)?(?:\[([^\]]+)\]|\/([^\/]+)\/)\s+bandwidth:\s*("unbound"|\d+)\s*#?.*$/;
 const DEPENDENCY_EXPLICIT_REGEX = /"([^"]+)"\s+(should happen before|depends on|should happen after)\s+"([^"]+)"\s*#?.*$/;
 
 
@@ -90,7 +90,7 @@ function parseTaskGroupBandwidth(line) {
         return null;
     }
 
-    const [, listStr, regexStr, bandwidthValueStr] = match;
+    const [, groupName, listStr, regexStr, bandwidthValueStr] = match;
     let type, identifiers;
 
     if (listStr) {
@@ -115,7 +115,10 @@ function parseTaskGroupBandwidth(line) {
         return null; // Invalid bandwidth value
     }
 
-    return { type, identifiers, bandwidth };
+    // Handle group name - use provided name or default to 'Unnamed Group'
+    const name = (groupName && groupName.trim() !== '') ? groupName.trim() : 'Unnamed Group';
+
+    return { type, name, identifiers, bandwidth };
 }
 
 /**
