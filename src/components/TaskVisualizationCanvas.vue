@@ -2,11 +2,21 @@
   <div ref="canvasContainer" class="relative h-full w-full overflow-hidden">
     <v-stage ref="stageRef" :config="stageConfig" @wheel="handleWheel">
       <v-layer ref="layerRef">
+        <!-- Render group boxes behind tasks -->
+        <template v-for="group in groupBoxes" :key="group.groupKey">
+          <v-rect
+            :config="group.boxConfig"
+            :data-testid="`group-box-${group.groupKey}`"
+          />
+          <v-text
+            :config="group.labelConfig"
+          />
+        </template>
         <template v-for="task in tasksWithLayout" :key="task.name">
           <v-rect :config="getTaskRectConfig(task)" />
           <v-text :config="getTaskTextConfig(task)" />
         </template>
-        </v-layer>
+      </v-layer>
     </v-stage>
     <TaskHoverCard
       :task="hoveredTask"
@@ -294,6 +304,56 @@ const tasksWithLayout = computed(() => {
   return augmentedTasks;
 });
 
+// --- GROUP BOX COMPUTED ---
+const groupBoxes = computed(() => {
+  // Group tasks by groupKey
+  const groups = {};
+  tasksWithLayout.value.forEach(task => {
+    if (task.groupKey && task.groupKey !== 'global') {
+      if (!groups[task.groupKey]) groups[task.groupKey] = [];
+      groups[task.groupKey].push(task);
+    }
+  });
+  // For each group, compute bounding box
+  return Object.entries(groups).map(([groupKey, tasks]) => {
+    if (!tasks.length) return null;
+    let minX = Math.min(...tasks.map(t => t.x));
+    let minY = Math.min(...tasks.map(t => t.y));
+    let maxX = Math.max(...tasks.map(t => t.x + t.width));
+    let maxY = Math.max(...tasks.map(t => t.y + t.height));
+    // Add some padding
+    const PADDING = 10;
+    minX -= PADDING;
+    minY -= PADDING;
+    maxX += PADDING;
+    maxY += PADDING;
+    // Find group name
+    const groupName = tasks[0]?.assignedBandwidthGroup?.name || groupKey;
+    return {
+      groupKey,
+      boxConfig: {
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+        fill: undefined, // transparent
+        stroke: '#CBD5E1', // gray-300
+        strokeWidth: 2,
+        cornerRadius: 8,
+        listening: false,
+      },
+      labelConfig: {
+        x: minX + 8,
+        y: minY - FONT_SIZE - 2,
+        text: groupName,
+        fontSize: FONT_SIZE,
+        fontFamily: FONT_FAMILY,
+        fill: '#64748b', // gray-500
+        listening: false,
+      }
+    };
+  }).filter(Boolean);
+});
 
 // Returns the Konva.Rect configuration for a given task (now with pre-calculated layout)
 const getTaskRectConfig = (task) => {
