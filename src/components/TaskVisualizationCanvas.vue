@@ -177,8 +177,10 @@ const tasksWithLayout = computed(() => {
 
   // Process each task group
   taskGroups.forEach((groupTasks, groupKey) => {
-    const groupLanes = [];
-    
+    // Determine bandwidth for this group (default to 1 if missing)
+    const groupBandwidth = groupTasks[0]?.assignedBandwidthGroup?.bandwidth || 1;
+    const groupLanes = Array.from({ length: groupBandwidth }, () => []);
+
     // Sort tasks within group by start time
     groupTasks.sort((a, b) => {
       if (a.startTime !== b.startTime) {
@@ -187,17 +189,30 @@ const tasksWithLayout = computed(() => {
       return a.endTime - b.endTime;
     });
 
-    // Assign lanes within this group
-    groupTasks.forEach((task, index) => {
-      // Assign consecutive lanes within the group (0, 1, 2, etc.)
-      const assignedLaneIndex = index;
-      
-      // Add task to the assigned lane
-      if (!groupLanes[assignedLaneIndex]) {
-        groupLanes[assignedLaneIndex] = [];
+    // Assign tasks to lanes, ensuring no more than 'bandwidth' overlap
+    groupTasks.forEach(task => {
+      let assignedLaneIndex = -1;
+      // Try to find a lane without time conflict
+      for (let i = 0; i < groupBandwidth; i++) {
+        const lane = groupLanes[i];
+        let conflict = false;
+        for (const existingTaskInLane of lane) {
+          if (!(task.endTime <= existingTaskInLane.startTime || task.startTime >= existingTaskInLane.endTime)) {
+            conflict = true;
+            break;
+          }
+        }
+        if (!conflict) {
+          assignedLaneIndex = i;
+          break;
+        }
+      }
+      // If all lanes are in conflict, assign to the first lane (stack visually)
+      if (assignedLaneIndex === -1) {
+        assignedLaneIndex = 0;
       }
       groupLanes[assignedLaneIndex].push(task);
-      
+
       // Calculate layout properties with global offset
       const x = START_OFFSET_X + task.startTime * TIME_UNIT_WIDTH;
       const y = START_OFFSET_Y + (globalLaneOffset + assignedLaneIndex) * (TASK_HEIGHT + TASK_VERTICAL_PADDING);
@@ -214,9 +229,9 @@ const tasksWithLayout = computed(() => {
         groupKey: groupKey,
       });
     });
-    
+
     // Update global lane offset for next group
-    globalLaneOffset += groupTasks.length;
+    globalLaneOffset += groupBandwidth;
   });
 
   // Process ungrouped tasks (use global bandwidth)

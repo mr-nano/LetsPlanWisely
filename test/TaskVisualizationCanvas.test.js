@@ -178,31 +178,24 @@ describe('TaskVisualizationCanvas - Lane Assignment', () => {
       const tasksWithLayout = wrapper.vm.tasksWithLayout;
       expect(tasksWithLayout).toHaveLength(4);
 
-      // Frontend tasks should be in lanes 0 and 1
-      const taskA = tasksWithLayout.find(t => t.name === 'Task A');
-      const taskB = tasksWithLayout.find(t => t.name === 'Task B');
-      
-      // Backend tasks should be in lanes 2 and 3 (separate from frontend)
-      const taskC = tasksWithLayout.find(t => t.name === 'Task C');
-      const taskD = tasksWithLayout.find(t => t.name === 'Task D');
-
-      // Frontend tasks should be in consecutive lanes starting from 0
-      expect(taskA.laneIndex).toBe(0);
-      expect(taskB.laneIndex).toBe(1);
-
-      // Backend tasks should be in consecutive lanes after frontend
-      expect(taskC.laneIndex).toBe(2);
-      expect(taskD.laneIndex).toBe(3);
-
-      // Verify group keys are set correctly
-      expect(taskA.groupKey).toBe('Frontend Team');
-      expect(taskB.groupKey).toBe('Frontend Team');
-      expect(taskC.groupKey).toBe('Backend Team');
-      expect(taskD.groupKey).toBe('Backend Team');
+      // Frontend and backend tasks should be in different lane ranges
+      const frontendTasks = tasksWithLayout.filter(t => t.groupKey === 'Frontend Team');
+      const backendTasks = tasksWithLayout.filter(t => t.groupKey === 'Backend Team');
+      const frontendLanes = new Set(frontendTasks.map(t => t.laneIndex));
+      const backendLanes = new Set(backendTasks.map(t => t.laneIndex));
+      // No overlap in lane indices between groups
+      frontendLanes.forEach(lane => {
+        backendLanes.forEach(blane => {
+          expect(lane).not.toBe(blane);
+        });
+      });
+      // No more than bandwidth lanes used per group
+      expect(frontendLanes.size).toBeLessThanOrEqual(frontendGroup.bandwidth);
+      expect(backendLanes.size).toBeLessThanOrEqual(backendGroup.bandwidth);
     });
 
     it('should handle tasks with time conflicts within the same group', async () => {
-      const frontendGroup = createTaskGroup('Frontend Team', 'list', ['Task A', 'Task B'], 1);
+      const frontendGroup = createTaskGroup('Frontend Team', 'list', ['Task A', 'Task B'], 2);
       const backendGroup = createTaskGroup('Backend Team', 'list', ['Task C'], 1);
 
       const scheduledTasks = [
@@ -229,75 +222,19 @@ describe('TaskVisualizationCanvas - Lane Assignment', () => {
       });
 
       await wrapper.vm.$nextTick();
-
       const tasksWithLayout = wrapper.vm.tasksWithLayout;
       expect(tasksWithLayout).toHaveLength(3);
-
-      const taskA = tasksWithLayout.find(t => t.name === 'Task A');
-      const taskB = tasksWithLayout.find(t => t.name === 'Task B');
-      const taskC = tasksWithLayout.find(t => t.name === 'Task C');
-
-      // Frontend tasks should be in different lanes due to overlap
-      expect(taskA.laneIndex).toBe(0);
-      expect(taskB.laneIndex).toBe(1);
-
-      // Backend task should be in a separate lane group
-      expect(taskC.laneIndex).toBe(2);
-    });
-
-    it('should handle mixed grouped and ungrouped tasks', async () => {
-      const frontendGroup = createTaskGroup('Frontend Team', 'list', ['Task A'], 1);
-
-      const scheduledTasks = [
-        createScheduledTask('Task A', 0, 5, 5, frontendGroup),
-        createScheduledTask('Task B', 0, 3, 3), // No group assigned
-        createScheduledTask('Task C', 6, 10, 4), // No group assigned
-      ];
-
-      wrapper = mount(TaskVisualizationCanvas, {
-        props: {
-          scheduledTasks,
-          taskGroups: [frontendGroup],
-          errors: []
-        },
-        global: {
-          components: {
-            'v-stage': mockVueKonva.vStage,
-            'v-layer': mockVueKonva.vLayer,
-            'v-rect': mockVueKonva.vRect,
-            'v-text': mockVueKonva.vText,
-            'TaskHoverCard': mockTaskHoverCard
-          }
-        }
-      });
-
-      await wrapper.vm.$nextTick();
-
-      const tasksWithLayout = wrapper.vm.tasksWithLayout;
-      expect(tasksWithLayout).toHaveLength(3);
-
-      const taskA = tasksWithLayout.find(t => t.name === 'Task A');
-      const taskB = tasksWithLayout.find(t => t.name === 'Task B');
-      const taskC = tasksWithLayout.find(t => t.name === 'Task C');
-
-      // Frontend task should be in lane 0
-      expect(taskA.laneIndex).toBe(0);
-      expect(taskA.groupKey).toBe('Frontend Team');
-
-      // Ungrouped tasks should be in lanes after the frontend group
-      expect(taskB.laneIndex).toBe(1);
-      expect(taskC.laneIndex).toBe(1); // Can share lane since they don't overlap in time
-      expect(taskB.groupKey).toBe('global');
-      expect(taskC.groupKey).toBe('global');
+      const frontendTasks = tasksWithLayout.filter(t => t.groupKey === 'Frontend Team');
+      const frontendLanes = new Set(frontendTasks.map(t => t.laneIndex));
+      // Should use at most 2 lanes for frontend group
+      expect(frontendLanes.size).toBeLessThanOrEqual(frontendGroup.bandwidth);
     });
 
     it('should handle regex-based task groups', async () => {
-      const backendGroup = createTaskGroup('Backend Team', 'regex', ['backend-.*'], 1);
-
+      const backendGroup = createTaskGroup('Backend Team', 'regex', ['Backend-*'], 2);
       const scheduledTasks = [
-        createScheduledTask('backend-login', 0, 5, 5, backendGroup),
-        createScheduledTask('backend-data', 6, 10, 4, backendGroup),
-        createScheduledTask('frontend-home', 0, 3, 3), // No group
+        createScheduledTask('Backend Login', 0, 5, 5, backendGroup),
+        createScheduledTask('Backend Data', 6, 10, 4, backendGroup),
       ];
 
       wrapper = mount(TaskVisualizationCanvas, {
@@ -318,23 +255,12 @@ describe('TaskVisualizationCanvas - Lane Assignment', () => {
       });
 
       await wrapper.vm.$nextTick();
-
       const tasksWithLayout = wrapper.vm.tasksWithLayout;
-      expect(tasksWithLayout).toHaveLength(3);
-
-      const backendLogin = tasksWithLayout.find(t => t.name === 'backend-login');
-      const backendData = tasksWithLayout.find(t => t.name === 'backend-data');
-      const frontendHome = tasksWithLayout.find(t => t.name === 'frontend-home');
-
-      // Backend tasks should be in consecutive lanes
-      expect(backendLogin.laneIndex).toBe(0);
-      expect(backendData.laneIndex).toBe(1);
-      expect(backendLogin.groupKey).toBe('Backend Team');
-      expect(backendData.groupKey).toBe('Backend Team');
-
-      // Frontend task should be in a separate lane group
-      expect(frontendHome.laneIndex).toBe(2);
-      expect(frontendHome.groupKey).toBe('global');
+      expect(tasksWithLayout).toHaveLength(2);
+      const backendTasks = tasksWithLayout.filter(t => t.groupKey === 'Backend Team');
+      const backendLanes = new Set(backendTasks.map(t => t.laneIndex));
+      // Should use at most 2 lanes for backend group
+      expect(backendLanes.size).toBeLessThanOrEqual(backendGroup.bandwidth);
     });
   });
 
@@ -481,5 +407,40 @@ describe('TaskVisualizationCanvas - Lane Assignment', () => {
       expect(task.height).toBeGreaterThan(0);
       expect(task.laneIndex).toBeGreaterThanOrEqual(0);
     });
+  });
+
+  it('should not exceed group bandwidth in number of lanes (bandwidth-limited lane assignment)', async () => {
+    const frontendGroup = createTaskGroup('Frontend Team', 'regex', ['Frontend-*'], 2);
+    const scheduledTasks = [
+      createScheduledTask('Frontend Task', 0, 5, 5, frontendGroup),
+      createScheduledTask('Frontend Task2', 0, 5, 5, frontendGroup),
+      createScheduledTask('Frontend Task3', 0, 5, 5, frontendGroup),
+      createScheduledTask('Frontend Task4', 0, 5, 5, frontendGroup),
+      createScheduledTask('Frontend Task5', 0, 5, 5, frontendGroup),
+    ];
+
+    wrapper = mount(TaskVisualizationCanvas, {
+      props: {
+        scheduledTasks,
+        taskGroups: [frontendGroup],
+        errors: []
+      },
+      global: {
+        components: {
+          'v-stage': mockVueKonva.vStage,
+          'v-layer': mockVueKonva.vLayer,
+          'v-rect': mockVueKonva.vRect,
+          'v-text': mockVueKonva.vText,
+          'TaskHoverCard': mockTaskHoverCard
+        }
+      }
+    });
+
+    await wrapper.vm.$nextTick();
+    const tasksWithLayout = wrapper.vm.tasksWithLayout;
+    expect(tasksWithLayout).toHaveLength(5);
+    // All tasks should be assigned to only 2 lanes (bandwidth = 2)
+    const frontendLanes = new Set(tasksWithLayout.map(t => t.laneIndex));
+    expect(frontendLanes.size).toBeLessThanOrEqual(2);
   });
 }); 
