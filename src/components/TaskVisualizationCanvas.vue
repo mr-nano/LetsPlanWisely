@@ -77,6 +77,9 @@ const ERROR_STROKE_COLOR = '#b91c1c'; // Red-700
 const TEXT_COLOR = '#ffffff'; // White for task text
 const FONT_FAMILY = 'Arial, sans-serif'; // Use a common sans-serif font
 
+// Add a vertical margin between groups
+const GROUP_VERTICAL_MARGIN = 24;
+
 // --- COMPUTED PROPERTIES ---
 
 // Stage configuration (width and height based on container)
@@ -240,8 +243,9 @@ const tasksWithLayout = computed(() => {
       });
     });
 
-    // Update global lane offset for next group
+    // Update global lane offset for next group, adding group margin
     globalLaneOffset += groupBandwidth;
+    globalLaneOffset += GROUP_VERTICAL_MARGIN / (TASK_HEIGHT + TASK_VERTICAL_PADDING);
   });
 
   // Process ungrouped tasks (use global bandwidth)
