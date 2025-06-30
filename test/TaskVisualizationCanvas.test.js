@@ -286,7 +286,7 @@ describe('TaskVisualizationCanvas - Lane Assignment', () => {
 
       // Ungrouped tasks should be in lanes after the frontend group
       expect(taskB.laneIndex).toBe(1);
-      expect(taskC.laneIndex).toBe(2);
+      expect(taskC.laneIndex).toBe(1); // Can share lane since they don't overlap in time
       expect(taskB.groupKey).toBe('global');
       expect(taskC.groupKey).toBe('global');
     });

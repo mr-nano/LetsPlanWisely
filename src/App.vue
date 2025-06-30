@@ -108,6 +108,7 @@
         ref="canvasRef"
         class="flex-grow min-h-0 mx-4 mb-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-inner dark:shadow-md overflow-hidden"
         :scheduledTasks="scheduledTasks"
+        :taskGroups="parsedData.taskGroups"
         :errors="errors"
       />
     </div>

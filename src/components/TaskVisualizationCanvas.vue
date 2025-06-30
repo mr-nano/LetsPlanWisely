@@ -28,6 +28,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  taskGroups: {
+    type: Array,
+    default: () => []
+  },
   errors: {
     type: Array,
     default: () => []
@@ -139,78 +143,138 @@ const zoomToFit = () => {
 
 /**
  * Advanced layout algorithm to assign tasks to lanes (Y positions)
- * to visualize parallel execution.
- * @param {Array<Object>} scheduledTasks - Tasks with startTime, endTime, resolvedDuration.
- * @returns {Array<Object>} Tasks augmented with 'x', 'y', 'width', 'height', 'laneIndex'.
+ * to visualize parallel execution with task group separation.
+ * @param {Array<Object>} scheduledTasks - Tasks with startTime, endTime, resolvedDuration, assignedBandwidthGroup.
+ * @returns {Array<Object>} Tasks augmented with 'x', 'y', 'width', 'height', 'laneIndex', 'groupKey'.
  */
 const tasksWithLayout = computed(() => {
   const tasks = [...props.scheduledTasks];
   if (tasks.length === 0) return [];
 
-  // Sort tasks primarily by start time, then by end time (shorter ones first, to fill gaps)
-  // This sort helps the lane assignment algorithm find better fits.
-  tasks.sort((a, b) => {
-    if (a.startTime !== b.startTime) {
-      return a.startTime - b.startTime;
+  // Group tasks by their assigned bandwidth group
+  const taskGroups = new Map();
+  const ungroupedTasks = [];
+  
+  tasks.forEach(task => {
+    if (task.assignedBandwidthGroup) {
+      const groupKey = task.assignedBandwidthGroup.name || 
+                      (task.assignedBandwidthGroup.type === 'list' ? 
+                       task.assignedBandwidthGroup.identifiers.join(',') : 
+                       task.assignedBandwidthGroup.identifiers[0]);
+      
+      if (!taskGroups.has(groupKey)) {
+        taskGroups.set(groupKey, []);
+      }
+      taskGroups.get(groupKey).push(task);
+    } else {
+      ungroupedTasks.push(task);
     }
-    return a.endTime - b.endTime;
   });
 
-  const lanes = []; // Each lane is an array of tasks assigned to it, sorted by start time
+  // Assign lanes for each group independently
   const augmentedTasks = [];
+  let globalLaneOffset = 0;
 
-  tasks.forEach(task => {
-    let assignedLaneIndex = -1;
+  // Process each task group
+  taskGroups.forEach((groupTasks, groupKey) => {
+    const groupLanes = [];
+    
+    // Sort tasks within group by start time
+    groupTasks.sort((a, b) => {
+      if (a.startTime !== b.startTime) {
+        return a.startTime - b.startTime;
+      }
+      return a.endTime - b.endTime;
+    });
 
-    // Try to find an existing lane where this task can fit
-    for (let i = 0; i < lanes.length; i++) {
-      const lane = lanes[i];
-      // Check if this task conflicts with any task currently in this lane
-      // A conflict exists if (task.start < existing.end AND task.end > existing.start)
-      let conflict = false;
-      for (const existingTaskInLane of lane) {
-        if (!(task.endTime <= existingTaskInLane.startTime || task.startTime >= existingTaskInLane.endTime)) {
-          conflict = true;
+    // Assign lanes within this group
+    groupTasks.forEach((task, index) => {
+      // Assign consecutive lanes within the group (0, 1, 2, etc.)
+      const assignedLaneIndex = index;
+      
+      // Add task to the assigned lane
+      if (!groupLanes[assignedLaneIndex]) {
+        groupLanes[assignedLaneIndex] = [];
+      }
+      groupLanes[assignedLaneIndex].push(task);
+      
+      // Calculate layout properties with global offset
+      const x = START_OFFSET_X + task.startTime * TIME_UNIT_WIDTH;
+      const y = START_OFFSET_Y + (globalLaneOffset + assignedLaneIndex) * (TASK_HEIGHT + TASK_VERTICAL_PADDING);
+      const width = task.resolvedDuration * TIME_UNIT_WIDTH;
+      const height = TASK_HEIGHT;
+
+      augmentedTasks.push({
+        ...task,
+        x,
+        y,
+        width,
+        height,
+        laneIndex: globalLaneOffset + assignedLaneIndex,
+        groupKey: groupKey,
+      });
+    });
+    
+    // Update global lane offset for next group
+    globalLaneOffset += groupTasks.length;
+  });
+
+  // Process ungrouped tasks (use global bandwidth)
+  if (ungroupedTasks.length > 0) {
+    const globalLanes = [];
+    
+    ungroupedTasks.sort((a, b) => {
+      if (a.startTime !== b.startTime) {
+        return a.startTime - b.startTime;
+      }
+      return a.endTime - b.endTime;
+    });
+
+    ungroupedTasks.forEach(task => {
+      let assignedLaneIndex = -1;
+      
+      // Try to find existing global lane without time conflicts
+      for (let i = 0; i < globalLanes.length; i++) {
+        const lane = globalLanes[i];
+        let conflict = false;
+        for (const existingTaskInLane of lane) {
+          if (!(task.endTime <= existingTaskInLane.startTime || task.startTime >= existingTaskInLane.endTime)) {
+            conflict = true;
+            break;
+          }
+        }
+        if (!conflict) {
+          assignedLaneIndex = i;
           break;
         }
       }
-      if (!conflict) {
-        assignedLaneIndex = i;
-        break;
+      
+      // Create new global lane if needed
+      if (assignedLaneIndex === -1) {
+        assignedLaneIndex = globalLanes.length;
+        globalLanes.push([]);
       }
-    }
+      
+      // Add task to the assigned lane
+      globalLanes[assignedLaneIndex].push(task);
+      
+      // Calculate layout properties
+      const x = START_OFFSET_X + task.startTime * TIME_UNIT_WIDTH;
+      const y = START_OFFSET_Y + (globalLaneOffset + assignedLaneIndex) * (TASK_HEIGHT + TASK_VERTICAL_PADDING);
+      const width = task.resolvedDuration * TIME_UNIT_WIDTH;
+      const height = TASK_HEIGHT;
 
-    // If no suitable lane found, create a new one
-    if (assignedLaneIndex === -1) {
-      assignedLaneIndex = lanes.length;
-      lanes.push([]);
-    }
-
-    // Add task to the assigned lane, keeping it sorted by start time
-    // This is important for subsequent tasks checking for conflicts in this lane
-    const insertIndex = lanes[assignedLaneIndex].findIndex(t => t.startTime > task.startTime);
-    if (insertIndex === -1) {
-      lanes[assignedLaneIndex].push(task);
-    } else {
-      lanes[assignedLaneIndex].splice(insertIndex, 0, task);
-    }
-
-
-    // Calculate layout properties
-    const x = START_OFFSET_X + task.startTime * TIME_UNIT_WIDTH;
-    const y = START_OFFSET_Y + assignedLaneIndex * (TASK_HEIGHT + TASK_VERTICAL_PADDING);
-    const width = task.resolvedDuration * TIME_UNIT_WIDTH;
-    const height = TASK_HEIGHT;
-
-    augmentedTasks.push({
-      ...task,
-      x,
-      y,
-      width,
-      height,
-      laneIndex: assignedLaneIndex,
+      augmentedTasks.push({
+        ...task,
+        x,
+        y,
+        width,
+        height,
+        laneIndex: globalLaneOffset + assignedLaneIndex,
+        groupKey: 'global',
+      });
     });
-  });
+  }
 
   return augmentedTasks;
 });
