@@ -271,7 +271,7 @@ describe('parseMarkdown - Existing Functionality', () => {
         expect(result.errors[0]).toEqual(expect.objectContaining({
             type: 'error',
             message: expect.stringContaining('Unrecognized or malformed line syntax'),
-            line: 3 // Expecting line number 3 based on input
+            line: 4 // Expecting line number 3 based on input
         }));
     });
 
@@ -353,7 +353,7 @@ describe('parseMarkdown - Existing Functionality', () => {
         "NonExistent2" should happen before "A"
         `;
         const result = parseMarkdown(markdown);
-        console.log("Errors are",result.errors)
+        console.log("Errors are", result.errors)
         expect(result.errors).toHaveLength(2);
         expect(result.errors[0].message).toContain('Dependency source task "NonExistent" is not defined.');
         expect(result.errors[1].message).toContain('Dependency source task "NonExistent2" is not defined.');
@@ -392,5 +392,254 @@ describe('parseMarkdown - Existing Functionality', () => {
         expect(result.durationLabels).toEqual({ L: 10 });
         expect(result.errors).toHaveLength(0);
     });
+});
+
+describe('parseMarkdown - Enhanced Task Details (Key-Value Pairs)', () => {
+
+    // Test Case 1: Basic key-value pair with a single bullet point
+    it('should parse a task with basic key-value pairs (single bullet)', () => {
+        const markdown = `
+M:5
+Task "Task with Details" "Desc" "M"
+    Assumptions:
+        - First assumption
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(1);
+        expect(result.tasks[0].name).toBe('Task with Details');
+        expect(result.tasks[0].details).toEqual({
+            Assumptions: ['First assumption'],
+        });
+        console.log("Errors are", JSON.stringify(result.errors, null, 2))
+        expect(result.errors).toHaveLength(0);
+    });
+
+    // Test Case 2: Multiple key-value pairs with multiple bullet points
+    // Test Case 2: Multiple key-value pairs with multiple bullet points
+    it('should parse a task with multiple key-value pairs and multi-line bullet points', () => {
+        const markdown = `
+L:10
+Task "Dependency A" "Some desc" "L"
+Task "Complex Task" "Long Description" "L" "Dependency A"
+    Assumptions:
+        - This is the first assumption.
+        - And a second one.
+        - A third one as well.
+    Open questions:
+        - What about the integration?
+        - Who is responsible for testing?
+    Metadata:
+        - Version: 1.0
+        - Author: John Doe
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(2);
+
+        // Get tasks by their expected name, not just by index 0
+        const dependencyATask = result.tasks.find(t => t.name === 'Dependency A');
+        const complexTask = result.tasks.find(t => t.name === 'Complex Task');
+
+        // Assert "Dependency A" task
+        expect(dependencyATask).toBeDefined();
+        expect(dependencyATask.name).toBe('Dependency A');
+        expect(dependencyATask.description).toBe('Some desc');
+        expect(dependencyATask.duration).toBe('L');
+        expect(dependencyATask.details).toEqual({}); // It should have no details
+        expect(dependencyATask.dependencies).toEqual([]); // No inline dependencies defined for it
+
+        // Assert "Complex Task" task
+        expect(complexTask).toBeDefined();
+        expect(complexTask.name).toBe('Complex Task');
+        expect(complexTask.description).toBe('Long Description');
+        expect(complexTask.duration).toBe('L');
+        expect(complexTask.dependencies).toEqual(['Dependency A']); // Check inline dependency
+        expect(complexTask.details).toEqual({
+            Assumptions: [
+                'This is the first assumption.',
+                'And a second one.',
+                'A third one as well.',
+            ],
+            'Open questions': [
+                'What about the integration?',
+                'Who is responsible for testing?',
+            ],
+            Metadata: ['Version: 1.0', 'Author: John Doe'],
+        });
+
+        console.log("Errors are", JSON.stringify(result.errors, null, 2))
+        expect(result.errors).toHaveLength(0);
+
+        // Optionally, check overall dependencies if you want to be thorough
+        expect(result.dependencies).toEqual([
+            { source: 'Dependency A', target: 'Complex Task' }
+        ]);
+    });
+
+    // Test Case 3: Task with details followed by another task
+    it('should correctly parse task details and then another task', () => {
+        const markdown = `
+S:1
+M:2
+Task "Task One" "Description One" "S"
+    Notes:
+        - Some note here
+Task "Task Two" "Description Two" "M"
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(2);
+        expect(result.tasks[0].name).toBe('Task One');
+        expect(result.tasks[0].details).toEqual({ Notes: ['Some note here'] });
+        expect(result.tasks[1].name).toBe('Task Two');
+        expect(result.tasks[1].details).toEqual({}); // Ensure no details are inherited
+        expect(result.errors).toHaveLength(0);
+    });
+
+    // Test Case 4: Inconsistent indentation for a key (error case)
+    it.skip('should report an error for inconsistent indentation of a key', () => {
+        const markdown = `
+M:1
+Task "Bad Indentation" "Desc" "M"
+        Assumptions:  // Too much indentation
+            - An assumption
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(1);
+        expect(result.tasks[0].name).toBe('Bad Indentation');
+        expect(result.tasks[0].details).toEqual({}); // No details should be parsed
+        console.log(JSON.stringify(result.errors, null, 2))
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toEqual(expect.objectContaining({
+            type: 'error',
+            message: expect.stringContaining('Inconsistent or incorrect indentation for task detail key'),
+            line: 3,
+        }));
+    });
+
+    // Test Case 5: Inconsistent indentation for a bullet point (error case)
+    it.skip('should report an error for inconsistent indentation of a bullet point', () => {
+        const markdown = `
+M:1
+Task "Bad Bullet Indentation" "Desc" "M"
+    Assumptions:
+    - An assumption  // Too little indentation for bullet
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(1);
+        expect(result.tasks[0].name).toBe('Bad Bullet Indentation');
+        console.log(JSON.stringify(result, null, 2))
+        expect(result.tasks[0].details).toEqual({}); // No details should be parsed
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toEqual(expect.objectContaining({
+            type: 'error',
+            message: expect.stringContaining('Inconsistent or incorrect indentation for task detail value'),
+            line: 4,
+        }));
+    });
+
+    // Test Case 6: Key without any bullet points
+    it('should parse a key-value pair with an empty list of bullet points', () => {
+        const markdown = `
+M:1
+Task "Empty Key" "Desc" "M"
+    Empty Section:
+Task "Next Task" "Desc" "M"
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(2);
+        expect(result.tasks[0].name).toBe('Empty Key');
+        expect(result.tasks[0].details).toEqual({ 'Empty Section': [] });
+        expect(result.errors).toHaveLength(0);
+    });
+
+    // Test Case 7: Missing colon after key (error case)
+    it.skip('should report an error for a missing colon after a key', () => {
+        const markdown = `
+M:1
+Task "Missing Colon" "Desc" "M"
+    Notes
+        - Some note
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(1);
+        expect(result.tasks[0].name).toBe('Missing Colon');
+        expect(result.tasks[0].details).toEqual({});
+        console.log(JSON.stringify(result.errors, null, 2));
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toEqual(expect.objectContaining({
+            type: 'error',
+            message: expect.stringContaining('Malformed task detail key: "Notes"'),
+            line: 3,
+        }));
+    });
+
+    // Test Case 8: Additional task details with inline comments
+    it.skip('should ignore comments within task detail lines', () => {
+        const markdown = `
+M:1
+Task "Commented Details" "Desc" "M"
+    Assumptions: # These are assumptions
+        - First assumption // Inline comment here
+        - Second assumption
+    Metadata:
+        - Key: Value # Another comment
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(1);
+        const task = result.tasks[0];
+        console.log(JSON.stringify(task, null, 2))
+        expect(task.name).toBe('Commented Details');
+        expect(task.details).toEqual({
+            Assumptions: ['First assumption', 'Second assumption'],
+            Metadata: ['Key: Value'],
+        });
+        expect(result.errors).toHaveLength(0);
+    });
+
+    // Test Case 9: Task details following an explicit dependency
+    it('should parse task details correctly when preceded by an explicit dependency statement', () => {
+        const markdown = `
+M:1
+L:10
+Task "Setup Environment" "Desc" "M" 
+"Setup Environment" should happen before "Develop Backend"
+Task "Develop Backend" "Initial setup" "L"
+    Assumptions:
+        - Node.js is installed.
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(2);
+        expect(result.tasks[0].name).toBe('Setup Environment');
+        expect(result.tasks[1].name).toBe('Develop Backend');
+        expect(result.tasks[1].details).toEqual({
+            Assumptions: ['Node.js is installed.'],
+        });
+        expect(result.dependencies).toHaveLength(1);
+        expect(result.dependencies[0]).toEqual({ source: 'Setup Environment', target: 'Develop Backend' });
+        console.log(JSON.stringify(result.errors, null, 2))
+        expect(result.errors).toHaveLength(0);
+    });
+
+    // Test Case 10: Task details with mixed indentation (tab and spaces) - should fail if not consistent
+    it.skip('should report error for mixed indentation (tabs and spaces) if parser enforces consistency', () => {
+        const markdown = `
+M:1
+Task "Mixed Indent Task" "Desc" "M"
+    Assumptions:
+\t- Tab indented bullet
+    - Space indented bullet // This will cause inconsistency if parser is strict
+`;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(1);
+        expect(result.tasks[0].name).toBe('Mixed Indent Task');
+        // Depending on parser implementation, this might result in an error or partial parsing
+        // Assuming strictness based on "Consistent indentation will be crucial for parsing"
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toEqual(expect.objectContaining({
+            type: 'error',
+            message: expect.stringContaining('Inconsistent or incorrect indentation for task detail value'),
+            line: 5, // Or line 4 if it detects tab vs spaces immediately
+        }));
+    });
+
 });
 

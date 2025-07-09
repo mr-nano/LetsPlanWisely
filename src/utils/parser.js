@@ -6,11 +6,13 @@
  */
 
 // --- Constants and Regular Expressions ---
-const TASK_LINE_REGEX = /^Task\s+"([^"]+)"(?:\s+"([^"]*)")?\s+"([^"]+)"(?:\s+"([^"]*)")?\s*#?.*$/;
-const DURATION_LABEL_DEFINITION_REGEX = /^([A-Z]+):\s*(\d+(\.\d+)?)\s*#?.*$/;
-const GLOBAL_BANDWIDTH_REGEX = /^Global Bandwidth:\s*("unbound"|\d+)\s*#?.*$/;
-const TASK_GROUP_BANDWIDTH_REGEX = /^Task Group\s+(?:"([^"]*)"\s+)?(?:\[([^\]]+)\]|\/([^\/]+)\/)\s+bandwidth:\s*("unbound"|\d+)\s*#?.*$/;
-const DEPENDENCY_EXPLICIT_REGEX = /"([^"]+)"\s+(should happen before|depends on|should happen after)\s+"([^"]+)"\s*#?.*$/;
+const TASK_LINE_REGEX = /^Task\s+"([^"]+)"(?:\s+"([^"]*)")?\s+"([^"]+)"(?:\s+"([^"]*)")?$/;
+const DURATION_LABEL_DEFINITION_REGEX = /^([A-Z]+):\s*(\d+(\.\d+)?)$/;
+const GLOBAL_BANDWIDTH_REGEX = /^Global Bandwidth:\s*("unbound"|\d+)$/;
+const TASK_GROUP_BANDWIDTH_REGEX = /^Task Group\s+(?:"([^"]*)"\s+)?(?:\[([^\]]+)\]|\/([^\/]+)\/)\s+bandwidth:\s*("unbound"|\d+)$/;
+const DEPENDENCY_EXPLICIT_REGEX = /"([^"]+)"\s+(should happen before|depends on|should happen after)\s+"([^"]+)"$/;
+const DETAIL_KEY_LINE_REGEX = /^(\s*)([^:]+):\s*$/; // Captures indentation and key. No comments here.
+const DETAIL_VALUE_LINE_REGEX = /^(\s*)-\s*(.+)$/; // Captures indentation and value. No comments here.
 
 
 /**
@@ -166,14 +168,22 @@ function parseExplicitDependency(line) {
  * @returns {object} An object containing parsed data: { tasks, dependencies, durationLabels, globalBandwidth, taskGroups, errors }
  */
 export function parseMarkdown(markdownInput) {
-    const lines = markdownInput.split('\n').map(line => line.trim()).filter(line => line.length > 0 && !line.startsWith('//') && !line.startsWith('#'));
+    const lines = markdownInput.split('\n'); // Keep raw lines for indentation and context changes
 
     const tasks = {}; // Use an object for quick lookup by name
-    const uniqueDependencies  = new Set(); // Stores { source, target }
+    const uniqueDependencies = new Set(); // Stores { source, target }
     const durationLabels = {}; // Stores { label: value }
     let globalBandwidth = 'unbound'; // Default
     const taskGroups = []; // Stores parsed task group objects
     const errors = []; // Stores { line: string, message: string, type: 'error'|'warning' }
+
+    // State variables for task details parsing
+    let currentTask = null;
+    let currentDetailKey = null;
+    let baseTaskIndentation = null; // Use null to indicate no active task details context
+    let currentKeyIndentation = null; // Track indentation of the current key
+    let currentValueIndentation = null; // Track indentation of the expected value
+
 
     // Helper to add a dependency to the set
     const addDependency = (source, target, originalLineNum = 'N/A') => { // Add originalLineNum parameter
@@ -194,12 +204,40 @@ export function parseMarkdown(markdownInput) {
 
         // Remove comments for parsing
         const effectiveLine = line.split('#')[0].split('//')[0].trim();
-        if (!effectiveLine) return; // Skip empty lines or lines with only comments
+
+        let detailKeyMatch = null;
+        let detailValueMatch = null;
+
+        // Get actual indentation of the raw line for detail parsing
+        const leadingWhitespaceMatch = line.match(/^(\s*)/);
+        const currentLineRawIndentation = leadingWhitespaceMatch ? leadingWhitespaceMatch[1].length : 0;
+
+        if (!effectiveLine) {
+            // This condition is important: if an empty line is encountered, it can signal the end of details
+            // for the current task. Reset currentTask context.
+            if (currentTask) {
+                currentTask = null;
+                currentDetailKey = null;
+                baseTaskIndentation = null;
+                currentKeyIndentation = null;
+                currentValueIndentation = null;
+            }
+            return; // Skip empty effective lines
+        }
 
         // Try to parse as a task
         const task = parseTaskLine(effectiveLine);
         if (task) {
+            currentTask = task;
+            currentDetailKey = null; // Reset detail key when a new task is found
+            baseTaskIndentation = currentLineRawIndentation; // Store task's raw indentation
+            // Reset detail indentation expectations for the new task
+            currentKeyIndentation = null;
+            currentValueIndentation = null;
             task.originalLineNum = originalLineNum;
+            task.details = {}; // Initialize details object for this task
+
+
             if (tasks[task.name]) {
                 errors.push({
                     line: originalLineNum,
@@ -212,54 +250,146 @@ export function parseMarkdown(markdownInput) {
             return;
         }
 
-        // Try to parse as duration label definition
-        const labelDef = parseDurationLabelDefinition(effectiveLine);
-        if (labelDef) {
-            if (durationLabels[labelDef.label]) {
-                errors.push({
-                    line: originalLineNum,
-                    message: `Duplicate definition for duration label "${labelDef.label}". The last definition will take precedence.`,
-                    type: 'warning'
-                });
+        // --- Handle Task Details (Key-Value Pairs) ---
+        // This block should only be entered if we currently have an active task context.
+        if (currentTask) {
+            // Attempt to parse as a detail key
+            detailKeyMatch = line.match(DETAIL_KEY_LINE_REGEX); // Use raw 'line' for indentation check
+            if (detailKeyMatch) {
+                const parsedIndentation = detailKeyMatch[1].length;
+                const key = detailKeyMatch[2].trim(); // Key content without colon
+
+                // Check indentation relative to the parent task
+                if (parsedIndentation > baseTaskIndentation) {
+                    if (currentKeyIndentation === null || parsedIndentation === currentKeyIndentation) {
+                        // First key or consistent indentation for subsequent keys
+                        currentDetailKey = key;
+                        currentTask.details[currentDetailKey] = [];
+                        currentKeyIndentation = parsedIndentation; // Set the expected key indentation
+                        currentValueIndentation = currentKeyIndentation + 2; // Values must be indented at least 2 more
+                        return;
+                    } else {
+                        // Inconsistent key indentation
+                        errors.push({
+                            line: originalLineNum,
+                            message: `Inconsistent indentation for task detail key "${key}". Expected ${currentKeyIndentation} spaces.`,
+                            type: 'error'
+                        });
+                        currentTask = null; // Invalidate context to prevent cascading errors
+                        currentDetailKey = null;
+                        baseTaskIndentation = null;
+                        currentKeyIndentation = null;
+                        currentValueIndentation = null;
+                        return;
+                    }
+                } else {
+                    // This line is indented less than or equal to the task, so it's not a detail key
+                    // This signifies the end of details for the previous task.
+                    currentTask = null;
+                    currentDetailKey = null;
+                    baseTaskIndentation = null;
+                    currentKeyIndentation = null;
+                    currentValueIndentation = null;
+                    // Fall through to try matching as another top-level directive.
+                }
             }
-            durationLabels[labelDef.label] = labelDef.value;
-            return;
-        }
 
-        // Try to parse as global bandwidth
-        const gb = parseGlobalBandwidth(effectiveLine);
-        if (gb !== null) { // Check for null, as 0 is a valid bandwidth
-            if (globalBandwidth !== 'unbound' && originalLineNum > 1) { // Only warn if it's a subsequent definition
-                errors.push({
-                    line: originalLineNum,
-                    message: `Duplicate Global Bandwidth definition. The last one defined will be used.`,
-                    type: 'warning'
-                });
+            // If a key was just parsed or we have an active key, try to parse a detail value
+            if (currentTask && currentDetailKey) {
+                const detailValueMatch = line.match(DETAIL_VALUE_LINE_REGEX); // Use raw 'line' for indentation check
+                if (detailValueMatch) {
+                    const parsedIndentation = detailValueMatch[1].length;
+                    const value = detailValueMatch[2].trim();
+
+                    // Check indentation relative to the current key
+                    if (parsedIndentation >= currentValueIndentation) {
+                        currentTask.details[currentDetailKey].push(value);
+                        return;
+                    } else {
+                        // Inconsistent value indentation
+                        errors.push({
+                            line: originalLineNum,
+                            message: `Inconsistent indentation for task detail value "- ${value}". Expected at least ${currentValueIndentation} spaces.`,
+                            type: 'error'
+                        });
+                        currentTask = null; // Invalidate context
+                        currentDetailKey = null;
+                        baseTaskIndentation = null;
+                        currentKeyIndentation = null;
+                        currentValueIndentation = null;
+                        return;
+                    }
+                }
             }
-            globalBandwidth = gb;
-            return;
+        }
+        // End of Task Details handling
+
+        // If we reached here, and currentTask is still active, it means the line was
+        // either not a recognized detail format, or it's a top-level directive.
+        // We need to reset the context if it's not a task detail.
+        if (currentTask && !detailKeyMatch && !detailValueMatch) {
+            currentTask = null;
+            currentDetailKey = null;
+            baseTaskIndentation = null;
+            currentKeyIndentation = null;
+            currentValueIndentation = null;
         }
 
-        // Try to parse as task group bandwidth
-        const tg = parseTaskGroupBandwidth(effectiveLine);
-        if (tg) {
-            taskGroups.push(tg);
-            return;
-        }
 
-        // Try to parse as explicit dependency
-        const explicitDep = parseExplicitDependency(effectiveLine);
-        if (explicitDep) {
-            addDependency(explicitDep.source, explicitDep.target, originalLineNum); // Use addDependency
-            return;
-        }
+        // IMPORTANT: The remaining parsing blocks (duration, global bandwidth, task group, explicit dependency)
+        // should **only** use `effectiveLine` and be placed after the detail parsing.
+        // Also, they should only run if `currentTask` is null (meaning we're not inside a task's detail block).
 
-        // If none of the above, it's an unrecognized line
-        errors.push({
-            line: originalLineNum,
-            message: `Unrecognized or malformed line syntax: "${effectiveLine}"`,
-            type: 'error'
-        });
+        if (!currentTask) {
+            // Try to parse as duration label definition
+            const labelDef = parseDurationLabelDefinition(effectiveLine);
+            if (labelDef) {
+                if (durationLabels[labelDef.label]) {
+                    errors.push({
+                        line: originalLineNum,
+                        message: `Duplicate definition for duration label "${labelDef.label}". The last definition will take precedence.`,
+                        type: 'warning'
+                    });
+                }
+                durationLabels[labelDef.label] = labelDef.value;
+                return;
+            }
+
+            // Try to parse as global bandwidth
+            const gb = parseGlobalBandwidth(effectiveLine);
+            if (gb !== null) { // Check for null, as 0 is a valid bandwidth
+                if (globalBandwidth !== 'unbound' && originalLineNum > 1) { // Only warn if it's a subsequent definition
+                    errors.push({
+                        line: originalLineNum,
+                        message: `Duplicate Global Bandwidth definition. The last one defined will be used.`,
+                        type: 'warning'
+                    });
+                }
+                globalBandwidth = gb;
+                return;
+            }
+
+            // Try to parse as task group bandwidth
+            const tg = parseTaskGroupBandwidth(effectiveLine);
+            if (tg) {
+                taskGroups.push(tg);
+                return;
+            }
+
+            // Try to parse as explicit dependency
+            const explicitDep = parseExplicitDependency(effectiveLine);
+            if (explicitDep) {
+                addDependency(explicitDep.source, explicitDep.target, originalLineNum); // Use addDependency
+                return;
+            }
+
+            // If none of the above, it's an unrecognized line
+            errors.push({
+                line: originalLineNum,
+                message: `Unrecognized or malformed line syntax: "${effectiveLine}"`,
+                type: 'error'
+            });
+        }
     });
 
     // Second pass: Process inline dependencies from parsed tasks and validate all dependencies
@@ -337,7 +467,7 @@ export function parseMarkdown(markdownInput) {
     // Return tasks as an array for easier iteration in subsequent steps
     return {
         tasks: Object.values(tasks), // Convert map back to array
-        dependencies: finalDependencies ,
+        dependencies: finalDependencies,
         durationLabels: durationLabels,
         globalBandwidth: globalBandwidth,
         taskGroups: taskGroups,
