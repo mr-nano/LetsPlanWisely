@@ -77,6 +77,9 @@ const ERROR_STROKE_COLOR = '#b91c1c'; // Red-700
 const TEXT_COLOR = '#ffffff'; // White for task text
 const FONT_FAMILY = 'Arial, sans-serif'; // Use a common sans-serif font
 
+const HIGHLIGHT_COLOR = '#FFA500'; // Orange, or a color that stands out
+const HIGHLIGHT_STROKE_WIDTH = 4; // Thicker stroke for highlight
+
 // Add a vertical margin between groups
 const GROUP_VERTICAL_MARGIN = 24;
 
@@ -153,6 +156,29 @@ const zoomToFit = () => {
 
   hoveredTask.value = null;
 };
+
+const isHighlighted = (task) => {
+    console.log(`Checking highlight for task: ${task.name}`);
+    console.log(`Hovered task: ${hoveredTask.value ? hoveredTask.value.name : 'None'}`);
+    if (hoveredTask.value) {
+        console.log(`Hovered task predecessors: ${hoveredTask.value.predecessors}`);
+    }
+
+
+    if (!hoveredTask.value) {
+        return false;
+    }
+    // Highlight the hovered task itself
+    if (hoveredTask.value.name === task.name) {
+        return true;
+    }
+    // Highlight tasks that are direct predecessors of the hovered task
+    // Assumes `task.predecessors` contains names of tasks that *precede* it.
+    // The scheduler output needs to provide this. If not, we'd infer from `props.dependencies`.
+    return hoveredTask.value.predecessors && hoveredTask.value.predecessors.includes(task.name);
+};
+
+
 
 /**
  * Advanced layout algorithm to assign tasks to lanes (Y positions)
@@ -362,8 +388,16 @@ const groupBoxes = computed(() => {
 // Returns the Konva.Rect configuration for a given task (now with pre-calculated layout)
 const getTaskRectConfig = (task) => {
   const isErrorTask = hasError(task.name);
-  const fillColor = isErrorTask ? ERROR_FILL_COLOR : TASK_FILL_COLOR;
-  const strokeColor = isErrorTask ? ERROR_STROKE_COLOR : TASK_STROKE_COLOR;
+  const isTaskHighlighted = isHighlighted(task); // New check
+
+  let fillColor = isErrorTask ? ERROR_FILL_COLOR : TASK_FILL_COLOR;
+  let strokeColor = isErrorTask ? ERROR_STROKE_COLOR : TASK_STROKE_COLOR;
+  let strokeWidth = 2;
+
+  if (isTaskHighlighted) {
+        strokeColor = HIGHLIGHT_COLOR;
+        strokeWidth = HIGHLIGHT_STROKE_WIDTH;
+  }
 
   return {
     x: task.x,

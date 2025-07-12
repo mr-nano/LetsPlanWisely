@@ -11,30 +11,27 @@
  * @param {Array<Object>} tasks - An array of task objects from the parser.
  * @param {Array<Object>} dependencies - An array of dependency objects { source, target }.
  * @param {Array<Object>} errors - An array to push errors into.
- * @returns {object} An object containing the graph (adjacency list) and in-degrees.
+ * @returns {object} An object containing the graph (adjacency list) and in-degrees, and task map with predecessors.
  */
 function buildGraph(tasks, dependencies, errors) {
     const graph = {}; // Adjacency list: { taskName: [dependentTask1, dependentTask2] }
     const inDegree = {}; // Number of incoming dependencies: { taskName: count }
-    const taskMap = new Map(tasks.map(task => [task.name, task])); // For quick lookup
+    const taskMap = new Map(tasks.map(task => [task.name, { ...task, predecessors: [] }]));
 
-    // Initialize graph and in-degrees for all tasks
     tasks.forEach(task => {
         graph[task.name] = [];
         inDegree[task.name] = 0;
     });
 
-    // Populate graph and in-degrees based on dependencies
     dependencies.forEach(dep => {
         const sourceTask = taskMap.get(dep.source);
         const targetTask = taskMap.get(dep.target);
 
-        // Only add if both source and target tasks exist
         if (sourceTask && targetTask) {
             graph[dep.source].push(dep.target);
             inDegree[dep.target]++;
+            targetTask.predecessors.push(dep.source);
         } else {
-            // Parser should catch these, but defensive check
             if (!sourceTask) {
                 errors.push({
                     message: `Scheduling error: Dependency source task "${dep.source}" not found.`,
@@ -78,7 +75,6 @@ function detectCircularDependencies(graph, tasks, errors) {
                     return true;
                 }
             } else if (recursionStack.has(neighbor)) {
-                // Cycle detected
                 hasCycle = true;
                 const cycleStart = path.indexOf(neighbor);
                 const cycle = path.slice(cycleStart).join(' -> ') + ` -> ${neighbor}`;
@@ -98,7 +94,6 @@ function detectCircularDependencies(graph, tasks, errors) {
     tasks.forEach(task => {
         if (!visited.has(task.name)) {
             if (dfs(task.name)) {
-                // If a cycle is found in one DFS path, we can stop
                 return;
             }
         }
@@ -109,42 +104,36 @@ function detectCircularDependencies(graph, tasks, errors) {
 
 /**
  * Calculates the earliest possible start time for each task using topological sort.
- * @param {Array<Object>} tasks - An array of task objects (with resolvedDuration).
+ * @param {Array<Object>} tasks - An array of task objects from the parser (not yet scheduled).
  * @param {Array<Object>} dependencies - An array of dependency objects { source, target }.
  * @param {number|'unbound'} globalBandwidth - The global parallelization limit.
  * @param {Array<Object>} taskGroups - An array of task group objects.
  * @returns {object} An object containing the scheduled tasks and any new errors.
  */
 export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups) {
-    const errors = []; // Errors specific to scheduling (e.g., circular dependencies)
-    const scheduledTasks = {}; // { taskName: { taskData, startTime, endTime, assignedBandwidthGroup } }
+    const errors = [];
 
     const { graph, inDegree, taskMap } = buildGraph(tasks, dependencies, errors);
 
-    // If there were issues building the graph (e.g., undefined tasks), return early
     if (errors.length > 0) {
-        return { scheduledTasks: Object.values(scheduledTasks), errors };
+        return { scheduledTasks: Array.from(taskMap.values()), errors };
     }
 
-    // Detect circular dependencies
-    if (detectCircularDependencies(graph, tasks, errors)) {
-        return { scheduledTasks: Object.values(scheduledTasks), errors };
+    if (detectCircularDependencies(graph, Array.from(taskMap.values()), errors)) {
+        return { scheduledTasks: Array.from(taskMap.values()), errors };
     }
 
-    // Initialize tasks with earliest possible start time (0 for no dependencies)
-    // and a 'completed time' that tracks when its predecessors are done.
-    tasks.forEach(task => {
+    const scheduledTasks = {};
+    Array.from(taskMap.values()).forEach(task => {
         scheduledTasks[task.name] = {
             ...task,
             startTime: 0,
             endTime: 0,
-            earliestPossibleStartTime: 0, // Tracks when all predecessors are done
-            assignedBandwidthGroup: null, // To store which task group's bandwidth applies
+            earliestPossibleStartTime: 0,
+            assignedBandwidthGroup: null,
         };
     });
 
-    // Apply task group bandwidths (last one defined takes precedence)
-    // This is done by modifying the `assignedBandwidthGroup` property
     taskGroups.forEach(group => {
         let regex = null;
         if (group.type === 'regex') {
@@ -156,11 +145,11 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups) 
                     type: 'error',
                     line: 'N/A'
                 });
-                return; // Skip this group if regex is invalid
+                return;
             }
         }
 
-        tasks.forEach(task => {
+        Object.values(scheduledTasks).forEach(task => {
             let appliesToTask = false;
             if (group.type === 'list') {
                 appliesToTask = group.identifiers.includes(task.name);
@@ -169,83 +158,117 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups) 
             }
 
             if (appliesToTask) {
-                // Overwrite previous group setting if a task belongs to multiple groups
                 scheduledTasks[task.name].assignedBandwidthGroup = group;
             }
         });
     });
 
+    const queue = Object.values(scheduledTasks).filter(task => inDegree[task.name] === 0);
 
-    // Use a queue for tasks ready to run (Kahn's algorithm for topological sort)
-    const queue = tasks.filter(task => inDegree[task.name] === 0);
-    let time = 0; // Represents the current "time unit" in the schedule
+    let time = 0;
+    let runningTasks = [];
 
-    // Keep track of tasks currently running and available capacity
-    let runningTasks = []; // { taskName, endTime, assignedBandwidthGroup }
-
-    // Schedule loop
     while (Object.values(scheduledTasks).some(t => t.endTime === 0)) {
-        // Increment time if no tasks can start or if all current tasks finished
-        if (queue.length === 0 && runningTasks.length === 0 && Object.values(scheduledTasks).some(t => t.endTime === 0)) {
-            // This means there's a problem (e.g., cycle not caught) or tasks are waiting for capacity
-            // For now, let's just advance time if nothing is ready but tasks are still pending.
-            // A more robust scheduler might identify deadlocks here.
-             time++;
-             continue;
-        }
+        // --- START LOGS & REFINED LOGIC ---
+        console.log(`\n--- Scheduling Cycle: Current Time = ${time} ---`);
+        console.log(`Initial running tasks: ${runningTasks.map(t => `${t.taskName} (ends ${t.endTime})`).join(', ')}`);
 
-        // Clean up finished tasks from runningTasks
-        runningTasks = runningTasks.filter(task => task.endTime > time);
+        // Update in-degrees for newly finished tasks (based on tasks that finish at or before `time`)
+        const newlyFinishedTasks = runningTasks.filter(task => task.endTime <= time);
+        runningTasks = runningTasks.filter(task => task.endTime > time); // Filter out finished tasks
+        
+        if (newlyFinishedTasks.length > 0) {
+            console.log(`Tasks finished at time ${time}: ${newlyFinishedTasks.map(t => t.taskName).join(', ')}`);
+            newlyFinishedTasks.forEach(finishedTask => {
+                graph[finishedTask.taskName].forEach(dependentTaskName => {
+                    inDegree[dependentTaskName]--;
+                    scheduledTasks[dependentTaskName].earliestPossibleStartTime = Math.max(
+                        scheduledTasks[dependentTaskName].earliestPossibleStartTime,
+                        finishedTask.endTime
+                    );
+                    // Add tasks to queue if they just became ready
+                    if (inDegree[dependentTaskName] === 0 && scheduledTasks[dependentTaskName].endTime === 0) {
+                        queue.push(scheduledTasks[dependentTaskName]);
+                        console.log(`  Task "${dependentTaskName}" became ready.`);
+                    }
+                });
+            });
+        }
+        console.log(`Running tasks AFTER cleanup: ${runningTasks.map(t => `${t.taskName} (ends ${t.endTime})`).join(', ')}`);
+        console.log(`Queue: ${queue.map(t => t.name).join(', ')}`);
 
         // Determine available bandwidth for different groups and global
         const currentGlobalBandwidth = globalBandwidth === 'unbound' ? Infinity : globalBandwidth;
-        let globalOccupancy = runningTasks.filter(t => !t.assignedBandwidthGroup).length;
-        const groupOccupancy = {}; // { groupIdentifier: count }
-
-        // Initialize group occupancy
+        let globalOccupancy = runningTasks.filter(t => !t.assignedBandwidthGroup).length; // Tasks without a specific group
+        
+        // Use a temporary map to track group occupancy for the current cycle
+        const currentGroupOccupancyMap = {}; 
         taskGroups.forEach(group => {
             const key = group.type === 'list' ? group.identifiers.join(',') : group.identifiers[0];
-            groupOccupancy[key] = runningTasks.filter(t =>
+            currentGroupOccupancyMap[key] = runningTasks.filter(t =>
                 t.assignedBandwidthGroup &&
                 ((t.assignedBandwidthGroup.type === 'list' && group.type === 'list' && t.assignedBandwidthGroup.identifiers.join(',') === key) ||
                  (t.assignedBandwidthGroup.type === 'regex' && group.type === 'regex' && t.assignedBandwidthGroup.identifiers[0] === key))
             ).length;
         });
 
-        // Identify tasks that are ready to run (all predecessors done) and satisfy bandwidth
-        const potentialTasksToRun = tasks
-            .filter(task =>
-                scheduledTasks[task.name].endTime === 0 && // Not yet scheduled
+        console.log(`Global Bandwidth: ${currentGlobalBandwidth}, Global Occupancy (before new tasks): ${globalOccupancy}`);
+        Object.keys(currentGroupOccupancyMap).forEach(key => {
+            console.log(`  Group "${key}" Occupancy (before new tasks): ${currentGroupOccupancyMap[key]}`);
+        });
+        
+
+        // Identify tasks that are ready to run at the current `time` and sort
+        const potentialTasksToRun = queue
+            .filter(task => 
+                task.endTime === 0 && // Not yet scheduled
                 inDegree[task.name] === 0 && // All predecessors are done
-                scheduledTasks[task.name].earliestPossibleStartTime <= time // Earliest start time reached
+                task.earliestPossibleStartTime <= time // Task can start by 'time'
             )
-            .sort((a, b) => b.resolvedDuration - a.resolvedDuration); // Prioritize longer tasks for critical path
+            .sort((a, b) => b.resolvedDuration - a.resolvedDuration); // Prioritize longer tasks
+        console.log(`Potential tasks to start now: ${potentialTasksToRun.map(t => `${t.name} (eps: ${t.earliestPossibleStartTime})`).join(', ')}`);
 
         const tasksStartedThisCycle = [];
 
-        for (const task of potentialTasksToRun) {
+        // Iterate through potential tasks and try to schedule them
+        for (let i = 0; i < potentialTasksToRun.length; i++) {
+            const task = potentialTasksToRun[i]; // Get from sorted list
             const taskScheduledData = scheduledTasks[task.name];
             const group = taskScheduledData.assignedBandwidthGroup;
 
             let canRun = false;
-            if (group) {
+            let debugReason = '';
+
+            // This is the CRITICAL LOGIC FIX for global + group bandwidths
+            if (group) { // Task is part of a specific group
                 const groupKey = group.type === 'list' ? group.identifiers.join(',') : group.identifiers[0];
                 const groupBandwidth = group.bandwidth === 'unbound' ? Infinity : group.bandwidth;
-                const currentGroupOccupancy = groupOccupancy[groupKey] || 0;
+                const currentThisGroupOccupancy = currentGroupOccupancyMap[groupKey] || 0;
 
-                if (currentGroupOccupancy < groupBandwidth) {
+                // A group-assigned task consumes BOTH group capacity AND global capacity
+                if (currentThisGroupOccupancy < groupBandwidth && globalOccupancy < currentGlobalBandwidth) {
                     canRun = true;
-                    groupOccupancy[groupKey] = currentGroupOccupancy + 1; // Temporarily increment for this cycle
+                    currentGroupOccupancyMap[groupKey] = currentThisGroupOccupancy + 1; // Consume group slot
+                    globalOccupancy++; // Consume global slot
+                    debugReason = `Group capacity OK (${currentThisGroupOccupancy}/${groupBandwidth}), Global capacity OK (${globalOccupancy-1}/${currentGlobalBandwidth})`;
+                } else {
+                    if (currentThisGroupOccupancy >= groupBandwidth) debugReason = `Group capacity exhausted (${currentThisGroupOccupancy}/${groupBandwidth})`;
+                    else debugReason = `Global capacity exhausted (${globalOccupancy}/${currentGlobalBandwidth})`;
                 }
-            } else { // Global bandwidth applies
+            } else { // Task is not part of any specific group (only global bandwidth applies)
                 if (globalOccupancy < currentGlobalBandwidth) {
                     canRun = true;
-                    globalOccupancy++; // Temporarily increment for this cycle
+                    globalOccupancy++; // Consume global slot
+                    debugReason = `Global capacity OK (${globalOccupancy-1}/${currentGlobalBandwidth})`;
+                } else {
+                    debugReason = `Global capacity exhausted (${globalOccupancy}/${currentGlobalBandwidth})`;
                 }
             }
+            console.log(`  Attempting to schedule "${task.name}" (Group: ${group ? group.name || group.identifiers[0] : 'None'}). Can run: ${canRun}. Reason: ${debugReason}`);
+
 
             if (canRun) {
-                taskScheduledData.startTime = Math.max(time, taskScheduledData.earliestPossibleStartTime);
+                taskScheduledData.startTime = time; // Start task at current time
                 taskScheduledData.endTime = taskScheduledData.startTime + task.resolvedDuration;
                 tasksStartedThisCycle.push(task.name);
 
@@ -254,28 +277,59 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups) 
                     endTime: taskScheduledData.endTime,
                     assignedBandwidthGroup: group
                 });
-
-                // Update in-degrees of dependencies
-                graph[task.name].forEach(dependentTaskName => {
-                    inDegree[dependentTaskName]--;
-                    // Update earliestPossibleStartTime for dependent tasks
-                    scheduledTasks[dependentTaskName].earliestPossibleStartTime = Math.max(
-                        scheduledTasks[dependentTaskName].earliestPossibleStartTime,
-                        taskScheduledData.endTime
-                    );
-                });
+                // Remove task from `queue` since it's now running
+                const queueIndex = queue.indexOf(task);
+                if (queueIndex > -1) {
+                    queue.splice(queueIndex, 1);
+                }
+                console.log(`    --> Task "${task.name}" SCHEDULED! Start: ${taskScheduledData.startTime}, End: ${taskScheduledData.endTime}`);
             }
         }
+        console.log(`Tasks actually started this cycle: ${tasksStartedThisCycle.join(', ')}`);
 
-        // Advance time to the earliest endTime of a running task, or just by 1 if nothing started
+
+        // --- Time Advancement ---
         if (runningTasks.length > 0) {
-            time = Math.min(...runningTasks.map(t => t.endTime));
+            // Advance time to the earliest finish time among currently running tasks
+            const minEndTimeRunning = Math.min(...runningTasks.map(t => t.endTime));
+            // Ensure time only moves forward
+            time = Math.max(time, minEndTimeRunning);
+            console.log(`Advancing time to next task finish: ${time}`);
         } else if (tasksStartedThisCycle.length === 0 && Object.values(scheduledTasks).some(t => t.endTime === 0)) {
-            // If no tasks started this cycle, but there are still unscheduled tasks, advance time by 1
-            // This prevents infinite loops if no tasks can run due to future predecessors or capacity
-             time++;
+            // If no tasks started this cycle, but there are still unscheduled tasks,
+            // this implies waiting for earliestPossibleStartTime or a resource to free up.
+            // Find the next earliest possible start time among *ready* tasks, or simply advance by 1.
+            let nextAdvanceTime = time + 1; // Default to advancing by 1
+            const nextAvailableEps = Object.values(scheduledTasks)
+                .filter(t => t.endTime === 0 && inDegree[t.name] === 0 && t.earliestPossibleStartTime > time)
+                .map(t => t.earliestPossibleStartTime);
+            
+            if (nextAvailableEps.length > 0) {
+                nextAdvanceTime = Math.min(nextAdvanceTime, ...nextAvailableEps);
+            }
+            time = nextAdvanceTime;
+            console.log(`Advancing time to ${time} (no tasks started, or waiting for EPS).`);
+        } else {
+            // No running tasks, no tasks to start, and all unscheduled tasks are either blocked by inDegree
+            // or should have been caught earlier (e.g. deadlocks). Break the loop.
+            console.log(`No more tasks can be scheduled. Breaking loop.`);
+            break;
         }
-    }
+
+        console.log(`End of Cycle ${time} state: Running: ${runningTasks.map(t => t.name).join(', ')}. Queue: ${queue.map(t => t.name).join(', ')}. Remaining Unscheduled: ${Object.values(scheduledTasks).filter(t => t.endTime === 0).map(t => t.name).join(', ')}`);
+
+    } // End of while loop
+
+    // Final check for unscheduled tasks
+    Object.values(scheduledTasks).forEach(task => {
+        if (task.endTime === 0) {
+            errors.push({
+                message: `Scheduling error: Task "${task.name}" could not be scheduled. Possible deadlock or unreachable state.`,
+                type: 'error',
+                line: task.originalLineNum || 'N/A'
+            });
+        }
+    });
 
     return { scheduledTasks: Object.values(scheduledTasks), errors };
 }
