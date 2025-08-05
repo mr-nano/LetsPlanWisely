@@ -7,10 +7,11 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, defineEmits, defineExpose } from 'vue';
 import { EditorState, Compartment } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from '@codemirror/basic-setup';
 import { autocompletion } from '@codemirror/autocomplete'; // Only autocompletion here
 import { lintGutter, linter, setDiagnostics } from '@codemirror/lint';
+import { indentWithTab, defaultKeymap } from '@codemirror/commands';
 
 // Import from our new completionProvider module
 import { myCompletion, setAvailableTaskNamesForCompletion } from '../utils/completionProvider.js';
@@ -59,6 +60,12 @@ onMounted(() => {
       doc: initialMarkdown,
       extensions: [
         basicSetup,
+        keymap.of([
+          // The indentWithTab command for the tab key
+          indentWithTab,
+          // Merge the default keymap to handle other common commands like undo/redo and escape
+          ...defaultKeymap
+        ]),
         autocompletion({ override: [myCompletion] }), // Use imported myCompletion
         lintGutter(),
         linterCompartment.of(linter(lintSource)),
