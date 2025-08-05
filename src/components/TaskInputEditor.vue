@@ -1,5 +1,5 @@
 <template>
-  <div class="relative flex flex-col h-full border border-gray-300 rounded overflow-hidden">
+  <div class="relative flex flex-col h-full border border-gray-300 rounded overflow-y-auto">
     <div ref="editorContainer" class="flex-grow"></div>
   </div>
 </template>
