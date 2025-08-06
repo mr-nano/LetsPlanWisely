@@ -1,11 +1,9 @@
 // vite.config.js
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import tailwindcss from 'tailwindcss' // For v3, the plugin is directly from 'tailwindcss'
+import tailwindcss from 'tailwindcss'
 import autoprefixer from 'autoprefixer'
 
-// --- PASTE YOUR TAILWIND CONFIG DIRECTLY HERE ---
-// (This is the entire content of your tailwind.config.js)
 const tailwindConfig = {
   darkMode: 'class',
   content: [
@@ -17,42 +15,53 @@ const tailwindConfig = {
   },
   plugins: [],
 };
-// --- END PASTE ---
-
-console.log("Tailwind Config Loaded:", tailwindConfig.content); // <--- ADD THIS LINE
-
 
 export default defineConfig({
   plugins: [vue()],
   css: {
     postcss: {
       plugins: [
-        // Pass the tailwindConfig object directly to the tailwindcss plugin
-        tailwindcss(tailwindConfig), // <-- IMPORTANT: Pass the config here
+        tailwindcss(tailwindConfig),
         autoprefixer(),
       ],
     },
   },
-  optimizeDeps: {
-    exclude: [
-      '@codemirror/state',
-      '@codemirror/view',
-      '@codemirror/basic-setup',
-      '@codemirror/language',
-      '@codemirror/autocomplete',
-      '@codemirror/lint',
-      '@lezer/highlight'
-    ]
-  },
   resolve: {
+    // Keep 'vue' for general deduplication if needed, but remove the conflicting CodeMirror entries
     dedupe: [
-      'vue',
-      '@codemirror/state',
-      '@codemirror/view',
+      'vue'
     ],
   },
+  
+  // This is the correct, consolidated configuration for Vitest
   test: {
     environment: 'jsdom',
     globals: true,
+    deps: {
+      // Inline CodeMirror packages to ensure Vite handles them correctly
+      inline: [
+        '@codemirror/state',
+        '@codemirror/view',
+        '@codemirror/commands',
+        '@codemirror/lint',
+        '@codemirror/autocomplete',
+        '@codemirror/basic-setup',
+        '@codemirror/language',
+        '@lezer/highlight'
+      ],
+      // The `dedupe` option ensures a single instance of these packages is used
+      dedupe: [
+        '@codemirror/state',
+        '@codemirror/view',
+        '@codemirror/commands',
+        '@codemirror/lint',
+        '@codemirror/autocomplete',
+        '@codemirror/basic-setup',
+        '@codemirror/language',
+        '@lezer/highlight'
+      ],
+    },
   },
-})
+
+  // Removed the top-level `deps` and `optimizeDeps` blocks to avoid conflicts.
+});
