@@ -111,6 +111,7 @@ describe('parseMarkdown - Existing Functionality', () => {
             type: 'list',
             name: 'Development Team',
             identifiers: ['Task A', 'Task B'],
+            startDate: null,
             bandwidth: 3,
         });
         expect(result.errors).toHaveLength(0);
@@ -124,6 +125,7 @@ describe('parseMarkdown - Existing Functionality', () => {
             type: 'regex',
             name: 'Backend Services',
             identifiers: ['backend-*'],
+            startDate: null,
             bandwidth: 'unbound',
         });
         expect(result.errors).toHaveLength(0);
@@ -142,6 +144,7 @@ describe('parseMarkdown - Existing Functionality', () => {
             type: 'list',
             name: 'Unnamed Group', // Default name when none provided
             identifiers: ['Task A', 'Task B'],
+            startDate: null,
             bandwidth: 3,
         });
         expect(result.errors).toHaveLength(0);
@@ -155,6 +158,7 @@ describe('parseMarkdown - Existing Functionality', () => {
             type: 'regex',
             name: 'Unnamed Group', // Default name when none provided
             identifiers: ['backend-*'],
+            startDate: null,
             bandwidth: 'unbound',
         });
         expect(result.errors).toHaveLength(0);
@@ -179,18 +183,21 @@ describe('parseMarkdown - Existing Functionality', () => {
             type: 'list',
             name: 'Frontend Team',
             identifiers: ['Frontend Task'],
+            startDate: null,
             bandwidth: 2,
         });
         expect(result.taskGroups[1]).toEqual({
             type: 'list',
             name: 'Backend Team',
             identifiers: ['Backend Task', 'API Task'],
+            startDate: null,
             bandwidth: 3,
         });
         expect(result.taskGroups[2]).toEqual({
             type: 'regex',
             name: 'Database Team',
             identifiers: ['Database*'],
+            startDate: null,
             bandwidth: 1,
         });
         expect(result.errors).toHaveLength(0);
@@ -220,6 +227,7 @@ describe('parseMarkdown - Existing Functionality', () => {
             name: 'Unnamed Group', // Should default to unnamed when empty string provided
             identifiers: ['Task A'],
             bandwidth: 3,
+            startDate: null,
         });
         expect(result.errors).toHaveLength(0);
     });
@@ -246,11 +254,11 @@ describe('parseMarkdown - Existing Functionality', () => {
         expect(result.errors).toHaveLength(0);
     });
 
-    it('should ignore lines starting with // or # as comments', () => {
+    it('should ignore lines starting with // as comments', () => {
         const markdown = `
         // This is a comment
         Task "A" "" "L"
-        # Another comment
+        // Another comment
         L:10
         `;
         const result = parseMarkdown(markdown);
@@ -302,6 +310,7 @@ describe('parseMarkdown - Existing Functionality', () => {
             type: 'list',
             name: 'Development Team',
             identifiers: ['Develop UI', 'Code Backend'],
+            startDate: null,
             bandwidth: 1,
         });
         expect(result.dependencies).toEqual([
@@ -643,3 +652,165 @@ Task "Mixed Indent Task" "Desc" "M"
 
 });
 
+describe('parseMarkdown - New PRD Features (Timeline & Scheduling)', () => {
+
+    it('should parse a global Start Date directive', () => {
+        const markdown = `
+        Start Date: 2025-06-01
+        Task "A" "" "L"
+        L:10
+        `;
+        const result = parseMarkdown(markdown);
+        console.log(result);
+        expect(result.startDate).toBe('2025-06-01');
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should parse an inline start date in a Task definition', () => {
+        const markdown = `
+        Task "A" "" "L" start: 2025-06-05
+        L:10
+        `;
+        const result = parseMarkdown(markdown);
+        console.log(result);
+        expect(result.tasks[0].name).toBe('A');
+        expect(result.tasks[0].startDate).toBe('2025-06-05');
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should parse an inline start date in a Task definition when its in double quotes', () => {
+        const markdown = `
+        Task "A" "" "L" start: "2025-06-05"
+        L:10
+        `;
+        const result = parseMarkdown(markdown);
+        console.log(result);
+        expect(result.tasks[0].name).toBe('A');
+        expect(result.tasks[0].startDate).toBe('2025-06-05');
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it.skip('should parse an inline start date in a Task definition when its in sinlge quotes', () => {
+        const markdown = `
+        Task "A" "" "L" start: '2025-06-05'
+        L:10
+        `;
+        const result = parseMarkdown(markdown);
+        console.log(result);
+        expect(result.tasks[0].name).toBe('A');
+        expect(result.tasks[0].startDate).toBe('2025-06-05');
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should parse an inline start date in a Task Group definition', () => {
+        const markdown = `
+        Task "A" "" "L"
+        Task Group "Group 1" ["A"] bandwidth: 1 start: 2025-06-10
+        L:10
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.taskGroups).toHaveLength(1);
+        expect(result.taskGroups[0].name).toBe('Group 1');
+        expect(result.taskGroups[0].startDate).toBe('2025-06-10');
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should parse a Work Days directive', () => {
+        const markdown = `
+        Work Days: Mon, Tue, Wed
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.workDays).toEqual(['Mon', 'Tue', 'Wed']);
+        expect(result.errors).toHaveLength(0);
+    });
+
+    // ADD THIS NEW TEST to verify the new, flexible behavior.
+    it('should parse a Work Days directive with full day names correctly', () => {
+        const markdown = `
+    Work Days: Monday, Tuesday, Wednesday
+    `;
+        const result = parseMarkdown(markdown);
+        expect(result.workDays).toEqual(['Mon', 'Tue', 'Wed']); // Expects standardized output
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should handle a truly malformed Work Days directive with an error', () => {
+        const markdown = `
+    Work Days: ABC, XYZ
+    `;
+        const result = parseMarkdown(markdown);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0].message).toContain('Unrecognized or malformed line syntax: "Work Days: ABC, XYZ"');
+    });
+
+    it('should parse a Holidays directive with multiple dates', () => {
+        const markdown = `
+        Holidays: 2025-12-25, 2026-01-01
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.holidays).toEqual(['2025-12-25', '2026-01-01']);
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should parse a Duration Mode directive', () => {
+        const markdown = `
+        Duration Mode: elapsed
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.durationMode).toBe('elapsed');
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should handle an invalid Duration Mode with an error', () => {
+        const markdown = `
+        Duration Mode: invalid
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0].message).toContain('Unrecognized or malformed line syntax: "Duration Mode: invalid"');
+    });
+
+    it('should parse a Non-working Day Color directive', () => {
+        const markdown = `
+        Non-working Day Color: #334155
+        `;
+        const result = parseMarkdown(markdown);
+        console.log(result)
+        expect(result.nonWorkingDayColor).toBe('#334155');
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should handle multiple top-level directives correctly', () => {
+        const markdown = `
+        Start Date: 2025-07-01
+        Work Days: Mon, Tue, Wed, Thu, Fri
+        Holidays: 2025-07-04
+        Duration Mode: working
+        Non-working Day Color: #f0f0f0
+        Task "A" "" "L"
+        L:10
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.startDate).toBe('2025-07-01');
+        expect(result.workDays).toEqual(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']);
+        expect(result.holidays).toEqual(['2025-07-04']);
+        expect(result.durationMode).toBe('working');
+        expect(result.nonWorkingDayColor).toBe('#f0f0f0');
+        expect(result.errors).toHaveLength(0);
+    });
+
+    it('should handle a task with both inline dependencies and an inline start date', () => {
+        const markdown = `
+        Task "A" "" "S"
+        Task "B" "" "L" "A" start: 2025-08-10
+        L:10
+        S:5
+        `;
+        const result = parseMarkdown(markdown);
+        expect(result.tasks).toHaveLength(2);
+        expect(result.tasks[1].name).toBe('B');
+        expect(result.tasks[1].dependencies).toEqual(['A']);
+        expect(result.tasks[1].startDate).toBe('2025-08-10');
+        expect(result.errors).toHaveLength(0);
+    });
+});

@@ -6,14 +6,20 @@
  */
 
 // --- Constants and Regular Expressions ---
-const TASK_LINE_REGEX = /^Task\s+"([^"]+)"(?:\s+"([^"]*)")?\s+"([^"]+)"(?:\s+"([^"]*)")?$/;
+const TASK_LINE_REGEX = /^Task\s+"([^"]+)"(?:\s+"([^"]*)")?\s+"([^"]+)"(?:\s+"([^"]*)")?(?:\s+start:\s*"?(\d{4}-\d{2}-\d{2})"?$)?/;
 const DURATION_LABEL_DEFINITION_REGEX = /^([A-Z]+):\s*(\d+(\.\d+)?)$/;
 const GLOBAL_BANDWIDTH_REGEX = /^Global Bandwidth:\s*("unbound"|\d+)$/;
-const TASK_GROUP_BANDWIDTH_REGEX = /^Task Group\s+(?:"([^"]*)"\s+)?(?:\[([^\]]+)\]|\/([^\/]+)\/)\s+bandwidth:\s*("unbound"|\d+)$/;
+const TASK_GROUP_BANDWIDTH_REGEX = /^Task Group\s+(?:"([^"]*)"\s+)?(?:\[([^\]]+)\]|\/([^\/]+)\/)\s+bandwidth:\s*("unbound"|\d+)(?:\s+start:\s*"?(\d{4}-\d{2}-\d{2})"?$)?$/;
 const DEPENDENCY_EXPLICIT_REGEX = /"([^"]+)"\s+(should happen before|depends on|should happen after)\s+"([^"]+)"$/;
-const DETAIL_KEY_LINE_REGEX = /^(\s*)([^:]+):\s*$/; // Captures indentation and key. No comments here.
-const DETAIL_VALUE_LINE_REGEX = /^(\s*)-\s*(.+)$/; // Captures indentation and value. No comments here.
+const DETAIL_KEY_LINE_REGEX = /^(\s*)([^:]+):\s*$/;
+const DETAIL_VALUE_LINE_REGEX = /^(\s*)-\s*(.+)$/;
 
+// --- New Directives for PRD ---
+const START_DATE_REGEX = /^Start Date:\s*"?(\d{4}-\d{2}-\d{2})"?$/;
+const WORK_DAYS_REGEX = /^Work Days:\s*([A-Za-z,\s]+)$/;
+const HOLIDAYS_REGEX = /^Holidays:\s*([\d-]+(?:,\s*[\d-]+)*)$/;
+const DURATION_MODE_REGEX = /^Duration Mode:\s*(working|elapsed)$/;
+const NON_WORKING_DAY_COLOR_REGEX = /^Non-working Day Color:\s*(#?[\da-fA-F]{3,6})?$/;
 
 /**
  * Parses a single task definition line.
@@ -25,17 +31,17 @@ function parseTaskLine(line) {
     if (!match) {
         return null;
     }
-
-    const [, name, description, durationStr, inlineDependenciesStr] = match;
+    // We get the date from the 5th capturing group, which handles both quoted and unquoted dates.
+    const [, name, description, durationStr, inlineDependenciesStr, startDateStr] = match;
 
     const task = {
         name: name.trim(),
         description: (description || '').trim(),
-        duration: durationStr.trim(), // Will be resolved to numerical value later
-        dependencies: [] // Initial empty array for dependencies
+        duration: durationStr.trim(),
+        dependencies: [],
+        startDate: startDateStr || null,
     };
 
-    // Parse inline dependencies
     if (inlineDependenciesStr) {
         task.dependencies = inlineDependenciesStr
             .split(',')
@@ -83,7 +89,7 @@ function parseGlobalBandwidth(line) {
 /**
  * Parses a task group bandwidth definition line.
  * @param {string} line - The line of text to parse.
- * @returns {object|null} An object { type: 'list'|'regex', identifiers: string[], bandwidth: number|'unbound' }
+ * @returns {object|null} An object { type: 'list'|'regex', identifiers: string[], bandwidth: number|'unbound', startDate: string|null }
  * if parsed successfully, otherwise null.
  */
 function parseTaskGroupBandwidth(line) {
@@ -92,17 +98,17 @@ function parseTaskGroupBandwidth(line) {
         return null;
     }
 
-    const [, groupName, listStr, regexStr, bandwidthValueStr] = match;
+    const [, groupName, listStr, regexStr, bandwidthValueStr, startDateStr] = match;
     let type, identifiers;
 
     if (listStr) {
         type = 'list';
-        identifiers = listStr.split(',').map(name => name.trim().replace(/^"|"$/g, '')); // Remove quotes
+        identifiers = listStr.split(',').map(name => name.trim().replace(/^"|"$/g, ''));
     } else if (regexStr) {
         type = 'regex';
         identifiers = [regexStr.trim()];
     } else {
-        return null; // Should not happen with the regex, but as a safeguard
+        return null;
     }
 
     let bandwidth;
@@ -114,13 +120,13 @@ function parseTaskGroupBandwidth(line) {
     }
 
     if (bandwidth === null) {
-        return null; // Invalid bandwidth value
+        return null;
     }
 
-    // Handle group name - use provided name or default to 'Unnamed Group'
     const name = (groupName && groupName.trim() !== '') ? groupName.trim() : 'Unnamed Group';
+    const startDate = startDateStr || null;
 
-    return { type, name, identifiers, bandwidth };
+    return { type, name, identifiers, bandwidth, startDate };
 }
 
 /**
@@ -128,9 +134,6 @@ function parseTaskGroupBandwidth(line) {
  * @param {string} line - The line of text to parse.
  * @returns {object|null} An object { source, target } if parsed successfully, otherwise null.
  */
-// src/utils/parser.js
-
-// src/utils/parser.js (Your updated parseExplicitDependency function)
 function parseExplicitDependency(line) {
     const match = line.match(DEPENDENCY_EXPLICIT_REGEX);
     if (match) {
@@ -138,21 +141,15 @@ function parseExplicitDependency(line) {
         let source, target;
 
         if (relationship === 'should happen before') {
-            // Task1 should happen before Task2 means Task1 -> Task2
             source = task1.trim();
             target = task2.trim();
         } else if (relationship === 'depends on') {
-            // Task1 depends on Task2 means Task2 -> Task1
-            // So, Task2 is the SOURCE (predecessor), Task1 is the TARGET (successor)
-            source = task2.trim(); // CORRECTED: This makes 'Task B' the source
-            target = task1.trim(); // CORRECTED: This makes 'Task C' the target
+            source = task2.trim();
+            target = task1.trim();
         } else if (relationship === 'should happen after') {
-            // Task1 should happen after Task2 means Task2 -> Task1
-            // So, Task2 is the SOURCE, Task1 is the TARGET
             source = task2.trim();
             target = task1.trim();
         } else {
-            // Fallback (shouldn't be hit with correct regex)
             source = task1.trim();
             target = task2.trim();
         }
@@ -163,33 +160,127 @@ function parseExplicitDependency(line) {
 }
 
 /**
+ * Parses a global Start Date definition line.
+ * @param {string} line - The line of text to parse.
+ * @returns {string|null} The date string if parsed successfully, otherwise null.
+ */
+function parseStartDate(line) {
+    const match = line.match(START_DATE_REGEX);
+    if (match) {
+        const dateStr = match[1];
+        return dateStr;
+    }
+    return null;
+}
+
+// Replace your existing parseWorkDays function with this:
+function parseWorkDays(line) {
+    const match = line.match(WORK_DAYS_REGEX);
+    if (match) {
+        const validDayNames = new Set([
+            'Mon', 'Monday', 'Tue', 'Tuesday', 'Wed', 'Wednesday',
+            'Thu', 'Thursday', 'Fri', 'Friday', 'Sat', 'Saturday',
+            'Sun', 'Sunday'
+        ]);
+
+        const days = match[1].split(',').map(day => day.trim());
+        const validatedDays = [];
+        let isValid = true;
+
+        for (const day of days) {
+            // Check if the day (case-insensitive) is in our set of valid names
+            if (validDayNames.has(day.charAt(0).toUpperCase() + day.slice(1).toLowerCase())) {
+                // To keep the output consistent, we can standardize the format
+                // For example, always use the three-letter abbreviation
+                const standardizedDay = day.charAt(0).toUpperCase() + day.slice(1, 3).toLowerCase();
+                validatedDays.push(standardizedDay);
+            } else {
+                isValid = false;
+                break; // Stop processing if any day is invalid
+            }
+        }
+
+        if (isValid) {
+            return validatedDays;
+        }
+    }
+    return null; // Return null if the regex doesn't match or a day is invalid
+}
+
+/**
+ * Parses a Holidays definition line.
+ * @param {string} line - The line of text to parse.
+ * @returns {string[]|null} An array of date strings if parsed successfully, otherwise null.
+ */
+function parseHolidays(line) {
+    const match = line.match(HOLIDAYS_REGEX);
+    if (match) {
+        return match[1].split(',').map(date => date.trim());
+    }
+    return null;
+}
+
+/**
+ * Parses a Duration Mode definition line.
+ * @param {string} line - The line of text to parse.
+ * @returns {string|null} The mode string ('working' or 'elapsed') if parsed successfully, otherwise null.
+ */
+function parseDurationMode(line) {
+    const match = line.match(DURATION_MODE_REGEX);
+    if (match) {
+        return match[1];
+    }
+    return null;
+}
+
+/**
+ * Parses a Non-working Day Color definition line.
+ * @param {string} line - The line of text to parse.
+ * @returns {string|null} The color code string if parsed successfully, otherwise null.
+ */
+function parseNonWorkingDayColor(line) {
+    const match = line.match(NON_WORKING_DAY_COLOR_REGEX);
+    if (match && match[1]) {
+        // The first capture group is the color code itself.
+        return match[1];
+    }
+    return null;
+}
+
+/**
  * Main function to parse the entire Markdown input.
  * @param {string} markdownInput - The raw Markdown text from the editor.
- * @returns {object} An object containing parsed data: { tasks, dependencies, durationLabels, globalBandwidth, taskGroups, errors }
+ * @returns {object} An object containing parsed data: { tasks, dependencies, durationLabels, globalBandwidth, taskGroups, errors, startDate, workDays, holidays, durationMode, nonWorkingDayColor }
  */
 export function parseMarkdown(markdownInput) {
-    const lines = markdownInput.split('\n'); // Keep raw lines for indentation and context changes
+    const lines = markdownInput.split('\n');
 
-    const tasks = {}; // Use an object for quick lookup by name
-    const uniqueDependencies = new Set(); // Stores { source, target }
-    const durationLabels = {}; // Stores { label: value }
-    let globalBandwidth = 'unbound'; // Default
-    const taskGroups = []; // Stores parsed task group objects
-    const errors = []; // Stores { line: string, message: string, type: 'error'|'warning' }
+    const tasks = {};
+    const uniqueDependencies = new Set();
+    const durationLabels = {};
+    const taskGroups = [];
+    const errors = [];
+
+    // --- New PRD State Variables with Defaults ---
+    let globalBandwidth = 'unbound';
+    let globalStartDate = null;
+    let workDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    let holidays = [];
+    let durationMode = 'working';
+    let nonWorkingDayColor = null;
 
     // State variables for task details parsing
     let currentTask = null;
     let currentDetailKey = null;
-    let baseTaskIndentation = null; // Use null to indicate no active task details context
-    let currentKeyIndentation = null; // Track indentation of the current key
-    let currentValueIndentation = null; // Track indentation of the expected value
-
+    let baseTaskIndentation = null;
+    let currentKeyIndentation = null;
+    let currentValueIndentation = null;
 
     // Helper to add a dependency to the set
-    const addDependency = (source, target, originalLineNum = 'N/A') => { // Add originalLineNum parameter
+    const addDependency = (source, target, originalLineNum = 'N/A') => {
         if (source === target) {
             errors.push({
-                line: originalLineNum, // Use provided line number for self-dependency error
+                line: originalLineNum,
                 message: `Task "${source}" cannot depend on itself.`,
                 type: 'error'
             });
@@ -200,21 +291,32 @@ export function parseMarkdown(markdownInput) {
 
     // First pass: Identify task definitions and explicit directives
     lines.forEach((line, index) => {
-        const originalLineNum = index + 1; // For error reporting
+        const originalLineNum = index + 1;
 
-        // Remove comments for parsing
-        const effectiveLine = line.split('#')[0].split('//')[0].trim();
+        console.log(`[Parser Debug] Line ${originalLineNum}: '${line}'`);
+    
+        let processedLine = line;
+
+        // Remove comments first
+        const slashCommentIndex = processedLine.indexOf('//');
+
+        if (slashCommentIndex !== -1) {
+            processedLine = processedLine.substring(0, slashCommentIndex);
+        }
+        
+        // Trim leading and trailing whitespace
+        const effectiveLine = processedLine.replace(/\s+/g, ' ').trim();
 
         let detailKeyMatch = null;
         let detailValueMatch = null;
 
-        // Get actual indentation of the raw line for detail parsing
+        console.log(`[Parser Debug] Effective Line: '${effectiveLine}'`);
+
+
         const leadingWhitespaceMatch = line.match(/^(\s*)/);
         const currentLineRawIndentation = leadingWhitespaceMatch ? leadingWhitespaceMatch[1].length : 0;
 
         if (!effectiveLine) {
-            // This condition is important: if an empty line is encountered, it can signal the end of details
-            // for the current task. Reset currentTask context.
             if (currentTask) {
                 currentTask = null;
                 currentDetailKey = null;
@@ -222,21 +324,18 @@ export function parseMarkdown(markdownInput) {
                 currentKeyIndentation = null;
                 currentValueIndentation = null;
             }
-            return; // Skip empty effective lines
+            return;
         }
 
-        // Try to parse as a task
         const task = parseTaskLine(effectiveLine);
         if (task) {
             currentTask = task;
-            currentDetailKey = null; // Reset detail key when a new task is found
-            baseTaskIndentation = currentLineRawIndentation; // Store task's raw indentation
-            // Reset detail indentation expectations for the new task
+            currentDetailKey = null;
+            baseTaskIndentation = currentLineRawIndentation;
             currentKeyIndentation = null;
             currentValueIndentation = null;
             task.originalLineNum = originalLineNum;
-            task.details = {}; // Initialize details object for this task
-
+            task.details = {};
 
             if (tasks[task.name]) {
                 errors.push({
@@ -246,36 +345,29 @@ export function parseMarkdown(markdownInput) {
                 });
             }
             tasks[task.name] = task;
-            // Dependencies defined inline will be processed in a second pass
             return;
         }
 
-        // --- Handle Task Details (Key-Value Pairs) ---
-        // This block should only be entered if we currently have an active task context.
         if (currentTask) {
-            // Attempt to parse as a detail key
-            detailKeyMatch = line.match(DETAIL_KEY_LINE_REGEX); // Use raw 'line' for indentation check
+            detailKeyMatch = line.match(DETAIL_KEY_LINE_REGEX);
             if (detailKeyMatch) {
                 const parsedIndentation = detailKeyMatch[1].length;
-                const key = detailKeyMatch[2].trim(); // Key content without colon
+                const key = detailKeyMatch[2].trim();
 
-                // Check indentation relative to the parent task
                 if (parsedIndentation > baseTaskIndentation) {
                     if (currentKeyIndentation === null || parsedIndentation === currentKeyIndentation) {
-                        // First key or consistent indentation for subsequent keys
                         currentDetailKey = key;
                         currentTask.details[currentDetailKey] = [];
-                        currentKeyIndentation = parsedIndentation; // Set the expected key indentation
-                        currentValueIndentation = currentKeyIndentation + 2; // Values must be indented at least 2 more
+                        currentKeyIndentation = parsedIndentation;
+                        currentValueIndentation = currentKeyIndentation + 2;
                         return;
                     } else {
-                        // Inconsistent key indentation
                         errors.push({
                             line: originalLineNum,
                             message: `Inconsistent indentation for task detail key "${key}". Expected ${currentKeyIndentation} spaces.`,
                             type: 'error'
                         });
-                        currentTask = null; // Invalidate context to prevent cascading errors
+                        currentTask = null;
                         currentDetailKey = null;
                         baseTaskIndentation = null;
                         currentKeyIndentation = null;
@@ -283,36 +375,30 @@ export function parseMarkdown(markdownInput) {
                         return;
                     }
                 } else {
-                    // This line is indented less than or equal to the task, so it's not a detail key
-                    // This signifies the end of details for the previous task.
                     currentTask = null;
                     currentDetailKey = null;
                     baseTaskIndentation = null;
                     currentKeyIndentation = null;
                     currentValueIndentation = null;
-                    // Fall through to try matching as another top-level directive.
                 }
             }
 
-            // If a key was just parsed or we have an active key, try to parse a detail value
             if (currentTask && currentDetailKey) {
-                const detailValueMatch = line.match(DETAIL_VALUE_LINE_REGEX); // Use raw 'line' for indentation check
+                const detailValueMatch = line.match(DETAIL_VALUE_LINE_REGEX);
                 if (detailValueMatch) {
                     const parsedIndentation = detailValueMatch[1].length;
                     const value = detailValueMatch[2].trim();
 
-                    // Check indentation relative to the current key
                     if (parsedIndentation >= currentValueIndentation) {
                         currentTask.details[currentDetailKey].push(value);
                         return;
                     } else {
-                        // Inconsistent value indentation
                         errors.push({
                             line: originalLineNum,
                             message: `Inconsistent indentation for task detail value "- ${value}". Expected at least ${currentValueIndentation} spaces.`,
                             type: 'error'
                         });
-                        currentTask = null; // Invalidate context
+                        currentTask = null;
                         currentDetailKey = null;
                         baseTaskIndentation = null;
                         currentKeyIndentation = null;
@@ -322,11 +408,7 @@ export function parseMarkdown(markdownInput) {
                 }
             }
         }
-        // End of Task Details handling
 
-        // If we reached here, and currentTask is still active, it means the line was
-        // either not a recognized detail format, or it's a top-level directive.
-        // We need to reset the context if it's not a task detail.
         if (currentTask && !detailKeyMatch && !detailValueMatch) {
             currentTask = null;
             currentDetailKey = null;
@@ -335,13 +417,7 @@ export function parseMarkdown(markdownInput) {
             currentValueIndentation = null;
         }
 
-
-        // IMPORTANT: The remaining parsing blocks (duration, global bandwidth, task group, explicit dependency)
-        // should **only** use `effectiveLine` and be placed after the detail parsing.
-        // Also, they should only run if `currentTask` is null (meaning we're not inside a task's detail block).
-
         if (!currentTask) {
-            // Try to parse as duration label definition
             const labelDef = parseDurationLabelDefinition(effectiveLine);
             if (labelDef) {
                 if (durationLabels[labelDef.label]) {
@@ -355,10 +431,9 @@ export function parseMarkdown(markdownInput) {
                 return;
             }
 
-            // Try to parse as global bandwidth
             const gb = parseGlobalBandwidth(effectiveLine);
-            if (gb !== null) { // Check for null, as 0 is a valid bandwidth
-                if (globalBandwidth !== 'unbound' && originalLineNum > 1) { // Only warn if it's a subsequent definition
+            if (gb !== null) {
+                if (globalBandwidth !== 'unbound' && originalLineNum > 1) {
                     errors.push({
                         line: originalLineNum,
                         message: `Duplicate Global Bandwidth definition. The last one defined will be used.`,
@@ -369,21 +444,56 @@ export function parseMarkdown(markdownInput) {
                 return;
             }
 
-            // Try to parse as task group bandwidth
             const tg = parseTaskGroupBandwidth(effectiveLine);
             if (tg) {
                 taskGroups.push(tg);
                 return;
             }
 
-            // Try to parse as explicit dependency
             const explicitDep = parseExplicitDependency(effectiveLine);
             if (explicitDep) {
-                addDependency(explicitDep.source, explicitDep.target, originalLineNum); // Use addDependency
+                addDependency(explicitDep.source, explicitDep.target, originalLineNum);
                 return;
             }
 
-            // If none of the above, it's an unrecognized line
+            // --- New parsing logic for PRD directives ---
+            const sd = parseStartDate(effectiveLine);
+            if (sd) {
+                if (globalStartDate) {
+                    errors.push({
+                        line: originalLineNum,
+                        message: `Duplicate Start Date definition. The last one defined will be used.`,
+                        type: 'warning'
+                    });
+                }
+                globalStartDate = sd;
+                return;
+            }
+
+            const wd = parseWorkDays(effectiveLine);
+            if (wd) {
+                workDays = wd;
+                return;
+            }
+
+            const h = parseHolidays(effectiveLine);
+            if (h) {
+                holidays = h;
+                return;
+            }
+
+            const dm = parseDurationMode(effectiveLine);
+            if (dm) {
+                durationMode = dm;
+                return;
+            }
+
+            const nwColor = parseNonWorkingDayColor(effectiveLine);
+            if (nwColor) {
+                nonWorkingDayColor = nwColor;
+                return;
+            }
+
             errors.push({
                 line: originalLineNum,
                 message: `Unrecognized or malformed line syntax: "${effectiveLine}"`,
@@ -395,8 +505,7 @@ export function parseMarkdown(markdownInput) {
     // Second pass: Process inline dependencies from parsed tasks and validate all dependencies
     Object.values(tasks).forEach(task => {
         task.dependencies.forEach(depName => {
-            // Call addDependency with the task's original line number for better error reporting
-            addDependency(depName, task.name, task.originalLineNum); // Inline: depName is source, task.name is target
+            addDependency(depName, task.name, task.originalLineNum);
         });
     });
 
@@ -410,11 +519,11 @@ export function parseMarkdown(markdownInput) {
             task.resolvedDuration = durationLabels[originalDuration];
         } else {
             errors.push({
-                line: task.originalLineNum || 'N/A', // Use task's stored line number if available
+                line: task.originalLineNum || 'N/A',
                 message: `Task "${task.name}" has an undefined duration label: "${originalDuration}".`,
                 type: 'error'
             });
-            task.resolvedDuration = 1; // Default to 1 to allow scheduling
+            task.resolvedDuration = 1;
         }
     });
 
@@ -422,26 +531,25 @@ export function parseMarkdown(markdownInput) {
     const definedTaskNames = new Set(Object.keys(tasks));
 
     // Validate explicit and inline dependencies
-    // Convert unique dependencies from Set to Array and then validate
     const finalDependencies = Array.from(uniqueDependencies).map(depStr => {
         const [source, target] = depStr.split('->');
         return { source, target };
-    }).sort((a, b) => { // Optional: Sort for consistent test output order
+    }).sort((a, b) => {
         if (a.source !== b.source) return a.source.localeCompare(b.source);
         return a.target.localeCompare(b.target);
     });
 
-    finalDependencies.forEach(dep => { // Iterate over the finalDependencies array
+    finalDependencies.forEach(dep => {
         if (!definedTaskNames.has(dep.source)) {
             errors.push({
-                line: 'N/A', // Cannot easily map back to original line after deduplication
+                line: 'N/A',
                 message: `Dependency source task "${dep.source}" is not defined.`,
                 type: 'error'
             });
         }
         if (!definedTaskNames.has(dep.target)) {
             errors.push({
-                line: 'N/A', // Cannot easily map back to original line after deduplication
+                line: 'N/A',
                 message: `Dependency target task "${dep.target}" is not defined.`,
                 type: 'error'
             });
@@ -461,16 +569,20 @@ export function parseMarkdown(markdownInput) {
                 }
             });
         }
-        // Regex identifiers are not validated here, as they are patterns
     });
 
-    // Return tasks as an array for easier iteration in subsequent steps
+    // --- Expanded Return Object ---
     return {
-        tasks: Object.values(tasks), // Convert map back to array
+        tasks: Object.values(tasks),
         dependencies: finalDependencies,
         durationLabels: durationLabels,
         globalBandwidth: globalBandwidth,
         taskGroups: taskGroups,
-        errors: errors
+        errors: errors,
+        startDate: globalStartDate,
+        workDays: workDays,
+        holidays: holidays,
+        durationMode: durationMode,
+        nonWorkingDayColor: nonWorkingDayColor
     };
 }
