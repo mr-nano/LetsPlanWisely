@@ -8,8 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest --coverage --reporter=html",
-    "posttest": "start coverage/html/index.html || xdg-open coverage/html/index.html || open coverage/html/index.html",
-    "onlytest" : "vitest"
+    "posttest": "start coverage/html/index.html || xdg-open coverage/html/index.html || open coverage/html/index.html"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.18.6",
