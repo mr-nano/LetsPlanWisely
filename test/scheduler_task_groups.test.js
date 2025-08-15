@@ -147,9 +147,8 @@ describe('scheduleTasks - Task Group Assignment', () => {
             expect(errors[0].type).toBe('error');
             expect(errors[0].message).toContain('Invalid regex in Task Group');
 
-            // Task should not be assigned to the invalid group
-            expect(scheduledTasks).toHaveLength(1);
-            expect(scheduledTasks[0].assignedBandwidthGroup).toBeNull();
+            // Task should not be assigned to the invalid group 2025-08-15 - Earlier we were still parsing the task and scheduling it we were not just assigning it to a task group but now since task groups are essentially scheduling font mechanisms or impact the scheduling if we fail parsing of a task group we will just not schedule it
+            expect(scheduledTasks).toHaveLength(0);
         });
 
         it('should handle mixed group types and ungrouped tasks', () => {

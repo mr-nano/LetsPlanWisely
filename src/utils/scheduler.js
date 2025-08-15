@@ -6,6 +6,8 @@
  * start/end times based on dependencies and parallelization limits.
  */
 
+import Calendar from './dateHelpers';
+
 /**
  * Creates a graph from tasks and dependencies for topological sorting and scheduling.
  * @param {Array<Object>} tasks - An array of task objects from the parser.
@@ -108,10 +110,13 @@ function detectCircularDependencies(graph, tasks, errors) {
  * @param {Array<Object>} dependencies - An array of dependency objects { source, target }.
  * @param {number|'unbound'} globalBandwidth - The global parallelization limit.
  * @param {Array<Object>} taskGroups - An array of task group objects.
+ * @param {Object} [calendarData] - Optional object containing global scheduling parameters.
  * @returns {object} An object containing the scheduled tasks and any new errors.
  */
-export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups) {
+export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, calendarData) {
     const errors = [];
+    const scheduledTasks = {};
+
 
     const { graph, inDegree, taskMap } = buildGraph(tasks, dependencies, errors);
 
@@ -123,14 +128,52 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups) 
         return { scheduledTasks: Array.from(taskMap.values()), errors };
     }
 
-    const scheduledTasks = {};
+     // A flag to check for fatal errors during setup
+    let hasFatalErrors = false;
+
+
+    // First, process and validate task groups
+    const processedTaskGroups = taskGroups.map(group => {
+        if (group.type === 'regex') {
+            try {
+                // Return the group with the compiled regex
+                return { ...group, regex: new RegExp(group.identifiers[0]) };
+            } catch (e) {
+                errors.push({
+                    message: `Invalid regex in Task Group "${group.identifiers[0]}": ${e.message}`,
+                    type: 'error',
+                    line: 'N/A'
+                });
+                hasFatalErrors = true;
+                return null; // Return null to mark this group as invalid
+            }
+        }
+        return group; // Return non-regex groups as is
+    }).filter(Boolean); // Filter out any null values
+
+    // If we found a fatal error, stop here.
+    if (hasFatalErrors) {
+        return { scheduledTasks: Object.values(scheduledTasks), errors };
+    }
+
     Array.from(taskMap.values()).forEach(task => {
+
+        // Find the most specific start date for the task
+        const taskGroup = taskGroups.find(group => 
+            (group.type === 'list' && group.identifiers.includes(task.name)) ||
+            (group.type === 'regex' && new RegExp(group.identifiers[0]).test(task.name))
+        );
+        const taskStartDate = task.startDate || (taskGroup ? taskGroup.startDate : null) || (calendarData ? calendarData.startDate : null);
+
+
         scheduledTasks[task.name] = {
             ...task,
             startTime: 0,
             endTime: 0,
             earliestPossibleStartTime: 0,
             assignedBandwidthGroup: null,
+            startDate: taskStartDate ? new Date(taskStartDate) : null,
+            endDate: null,
         };
     });
 
