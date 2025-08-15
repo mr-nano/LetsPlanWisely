@@ -117,7 +117,6 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
     const errors = [];
     const scheduledTasks = {};
 
-
     const { graph, inDegree, taskMap } = buildGraph(tasks, dependencies, errors);
 
     if (errors.length > 0) {
@@ -128,15 +127,11 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
         return { scheduledTasks: Array.from(taskMap.values()), errors };
     }
 
-     // A flag to check for fatal errors during setup
+    // New: Handle invalid regexes before the main loop
     let hasFatalErrors = false;
-
-
-    // First, process and validate task groups
     const processedTaskGroups = taskGroups.map(group => {
         if (group.type === 'regex') {
             try {
-                // Return the group with the compiled regex
                 return { ...group, regex: new RegExp(group.identifiers[0]) };
             } catch (e) {
                 errors.push({
@@ -145,234 +140,199 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
                     line: 'N/A'
                 });
                 hasFatalErrors = true;
-                return null; // Return null to mark this group as invalid
+                return null;
             }
         }
-        return group; // Return non-regex groups as is
-    }).filter(Boolean); // Filter out any null values
+        return group;
+    }).filter(Boolean);
 
-    // If we found a fatal error, stop here.
     if (hasFatalErrors) {
         return { scheduledTasks: Object.values(scheduledTasks), errors };
     }
+    
+    // New: Check if calendarData is present. If not, use the old scheduling logic.
+    if (!calendarData || !calendarData.startDate) {
+        // --- Fallback to Old Time-Unit Scheduling Logic ---
+        Array.from(taskMap.values()).forEach(task => {
+            scheduledTasks[task.name] = {
+                ...task,
+                startTime: 0,
+                endTime: 0,
+                earliestPossibleStartTime: 0,
+                assignedBandwidthGroup: null, // This will be assigned later in the loop
+            };
+        });
 
-    Array.from(taskMap.values()).forEach(task => {
+        // The rest of the original time-unit based loop remains unchanged:
+        const queue = Object.values(scheduledTasks).filter(task => inDegree[task.name] === 0);
+        let time = 0;
+        let runningTasks = [];
 
-        // Find the most specific start date for the task
-        const taskGroup = taskGroups.find(group => 
-            (group.type === 'list' && group.identifiers.includes(task.name)) ||
-            (group.type === 'regex' && new RegExp(group.identifiers[0]).test(task.name))
-        );
-        const taskStartDate = task.startDate || (taskGroup ? taskGroup.startDate : null) || (calendarData ? calendarData.startDate : null);
-
-
-        scheduledTasks[task.name] = {
-            ...task,
-            startTime: 0,
-            endTime: 0,
-            earliestPossibleStartTime: 0,
-            assignedBandwidthGroup: null,
-            startDate: taskStartDate ? new Date(taskStartDate) : null,
-            endDate: null,
-        };
-    });
-
-    taskGroups.forEach(group => {
-        let regex = null;
-        if (group.type === 'regex') {
-            try {
-                regex = new RegExp(group.identifiers[0]);
-            } catch (e) {
-                errors.push({
-                    message: `Invalid regex in Task Group "${group.identifiers[0]}": ${e.message}`,
-                    type: 'error',
-                    line: 'N/A'
+        while (Object.values(scheduledTasks).some(t => t.endTime === 0)) {
+            // Update in-degrees for newly finished tasks
+            const newlyFinishedTasks = runningTasks.filter(task => task.endTime <= time);
+            runningTasks = runningTasks.filter(task => task.endTime > time);
+            
+            if (newlyFinishedTasks.length > 0) {
+                newlyFinishedTasks.forEach(finishedTask => {
+                    graph[finishedTask.taskName].forEach(dependentTaskName => {
+                        inDegree[dependentTaskName]--;
+                        scheduledTasks[dependentTaskName].earliestPossibleStartTime = Math.max(
+                            scheduledTasks[dependentTaskName].earliestPossibleStartTime,
+                            finishedTask.endTime
+                        );
+                        if (inDegree[dependentTaskName] === 0 && scheduledTasks[dependentTaskName].endTime === 0) {
+                            queue.push(scheduledTasks[dependentTaskName]);
+                        }
+                    });
                 });
-                return;
+            }
+
+            const currentGlobalBandwidth = globalBandwidth === 'unbound' ? Infinity : globalBandwidth;
+            let globalOccupancy = runningTasks.filter(t => !t.assignedBandwidthGroup).length;
+            
+            const currentGroupOccupancyMap = {}; 
+            processedTaskGroups.forEach(group => {
+                const key = group.type === 'list' ? group.identifiers.join(',') : group.identifiers[0];
+                currentGroupOccupancyMap[key] = runningTasks.filter(t =>
+                    t.assignedBandwidthGroup &&
+                    ((t.assignedBandwidthGroup.type === 'list' && group.type === 'list' && t.assignedBandwidthGroup.identifiers.join(',') === key) ||
+                    (t.assignedBandwidthGroup.type === 'regex' && group.type === 'regex' && t.assignedBandwidthGroup.regex.test(t.taskName)))
+                ).length;
+            });
+            
+            const potentialTasksToRun = queue
+                .filter(task =>
+                    task.endTime === 0 &&
+                    inDegree[task.name] === 0 &&
+                    task.earliestPossibleStartTime <= time
+                )
+                .sort((a, b) => b.resolvedDuration - a.resolvedDuration);
+
+            const tasksStartedThisCycle = [];
+
+            for (let i = 0; i < potentialTasksToRun.length; i++) {
+                const task = potentialTasksToRun[i];
+                const taskScheduledData = scheduledTasks[task.name];
+                
+                // Re-assign group since it's not done initially in this old logic branch
+                const taskGroup = processedTaskGroups.find(group => 
+                    (group.type === 'list' && group.identifiers.includes(task.name)) ||
+                    (group.type === 'regex' && group.regex.test(task.name))
+                );
+                taskScheduledData.assignedBandwidthGroup = taskGroup;
+
+                let canRun = false;
+                const group = taskScheduledData.assignedBandwidthGroup;
+                
+                if (group) {
+                    const groupKey = group.type === 'list' ? group.identifiers.join(',') : group.identifiers[0];
+                    const groupBandwidth = group.bandwidth === 'unbound' ? Infinity : group.bandwidth;
+                    const currentThisGroupOccupancy = currentGroupOccupancyMap[groupKey] || 0;
+                    if (currentThisGroupOccupancy < groupBandwidth && globalOccupancy < currentGlobalBandwidth) {
+                        canRun = true;
+                        currentGroupOccupancyMap[groupKey] = currentThisGroupOccupancy + 1;
+                        globalOccupancy++;
+                    }
+                } else {
+                    if (globalOccupancy < currentGlobalBandwidth) {
+                        canRun = true;
+                        globalOccupancy++;
+                    }
+                }
+
+                if (canRun) {
+                    taskScheduledData.startTime = time;
+                    taskScheduledData.endTime = taskScheduledData.startTime + task.resolvedDuration;
+                    tasksStartedThisCycle.push(task.name);
+                    runningTasks.push({
+                        taskName: task.name,
+                        endTime: taskScheduledData.endTime,
+                        assignedBandwidthGroup: group
+                    });
+                    const queueIndex = queue.indexOf(task);
+                    if (queueIndex > -1) {
+                        queue.splice(queueIndex, 1);
+                    }
+                }
+            }
+
+            if (runningTasks.length > 0) {
+                const minEndTimeRunning = Math.min(...runningTasks.map(t => t.endTime));
+                time = Math.max(time, minEndTimeRunning);
+            } else if (tasksStartedThisCycle.length === 0 && Object.values(scheduledTasks).some(t => t.endTime === 0)) {
+                let nextAdvanceTime = time + 1;
+                const nextAvailableEps = Object.values(scheduledTasks)
+                    .filter(t => t.endTime === 0 && inDegree[t.name] === 0 && t.earliestPossibleStartTime > time)
+                    .map(t => t.earliestPossibleStartTime);
+                
+                if (nextAvailableEps.length > 0) {
+                    nextAdvanceTime = Math.min(nextAdvanceTime, ...nextAvailableEps);
+                }
+                time = nextAdvanceTime;
+            } else {
+                break;
             }
         }
 
         Object.values(scheduledTasks).forEach(task => {
-            let appliesToTask = false;
-            if (group.type === 'list') {
-                appliesToTask = group.identifiers.includes(task.name);
-            } else if (group.type === 'regex' && regex) {
-                appliesToTask = regex.test(task.name);
-            }
-
-            if (appliesToTask) {
-                scheduledTasks[task.name].assignedBandwidthGroup = group;
+            if (task.endTime === 0) {
+                errors.push({
+                    message: `Scheduling error: Task "${task.name}" could not be scheduled. Possible deadlock or unreachable state.`,
+                    type: 'error',
+                    line: task.originalLineNum || 'N/A'
+                });
             }
         });
+
+        return { scheduledTasks: Object.values(scheduledTasks), errors };
+    }
+    
+    // --- New Date-Aware Scheduling Logic (Only runs if calendarData is present) ---
+    Array.from(taskMap.values()).forEach(task => {
+        const taskGroup = processedTaskGroups.find(group => 
+            (group.type === 'list' && group.identifiers.includes(task.name)) ||
+            (group.type === 'regex' && group.regex.test(task.name))
+        );
+        const taskStartDate = task.startDate || (taskGroup ? taskGroup.startDate : null) || (calendarData ? calendarData.startDate : null);
+
+        scheduledTasks[task.name] = {
+            ...task,
+            startDate: taskStartDate ? new Date(taskStartDate) : null,
+            endDate: null,
+            isScheduled: false,
+            assignedBandwidthGroup: taskGroup,
+            // The time fields will be calculated later
+            startTime: 0,
+            endTime: 0,
+            earliestPossibleStartTime: 0,
+        };
     });
 
-    const queue = Object.values(scheduledTasks).filter(task => inDegree[task.name] === 0);
+    const queue = Object.values(scheduledTasks).filter(t => inDegree[t.name] === 0);
+    const scheduledTasksList = [];
 
-    let time = 0;
-    let runningTasks = [];
-
-    while (Object.values(scheduledTasks).some(t => t.endTime === 0)) {
-        // --- START LOGS & REFINED LOGIC ---
-        console.log(`\n--- Scheduling Cycle: Current Time = ${time} ---`);
-        console.log(`Initial running tasks: ${runningTasks.map(t => `${t.taskName} (ends ${t.endTime})`).join(', ')}`);
-
-        // Update in-degrees for newly finished tasks (based on tasks that finish at or before `time`)
-        const newlyFinishedTasks = runningTasks.filter(task => task.endTime <= time);
-        runningTasks = runningTasks.filter(task => task.endTime > time); // Filter out finished tasks
-        
-        if (newlyFinishedTasks.length > 0) {
-            console.log(`Tasks finished at time ${time}: ${newlyFinishedTasks.map(t => t.taskName).join(', ')}`);
-            newlyFinishedTasks.forEach(finishedTask => {
-                graph[finishedTask.taskName].forEach(dependentTaskName => {
-                    inDegree[dependentTaskName]--;
-                    scheduledTasks[dependentTaskName].earliestPossibleStartTime = Math.max(
-                        scheduledTasks[dependentTaskName].earliestPossibleStartTime,
-                        finishedTask.endTime
-                    );
-                    // Add tasks to queue if they just became ready
-                    if (inDegree[dependentTaskName] === 0 && scheduledTasks[dependentTaskName].endTime === 0) {
-                        queue.push(scheduledTasks[dependentTaskName]);
-                        console.log(`  Task "${dependentTaskName}" became ready.`);
-                    }
-                });
-            });
+    // Simple scheduling loop for date-aware logic (will be expanded later)
+    queue.forEach(task => {
+        if (!task.startDate) {
+             task.startDate = calendarData.startDate;
         }
-        console.log(`Running tasks AFTER cleanup: ${runningTasks.map(t => `${t.taskName} (ends ${t.endTime})`).join(', ')}`);
-        console.log(`Queue: ${queue.map(t => t.name).join(', ')}`);
 
-        // Determine available bandwidth for different groups and global
-        const currentGlobalBandwidth = globalBandwidth === 'unbound' ? Infinity : globalBandwidth;
-        let globalOccupancy = runningTasks.filter(t => !t.assignedBandwidthGroup).length; // Tasks without a specific group
-        
-        // Use a temporary map to track group occupancy for the current cycle
-        const currentGroupOccupancyMap = {}; 
-        taskGroups.forEach(group => {
-            const key = group.type === 'list' ? group.identifiers.join(',') : group.identifiers[0];
-            currentGroupOccupancyMap[key] = runningTasks.filter(t =>
-                t.assignedBandwidthGroup &&
-                ((t.assignedBandwidthGroup.type === 'list' && group.type === 'list' && t.assignedBandwidthGroup.identifiers.join(',') === key) ||
-                 (t.assignedBandwidthGroup.type === 'regex' && group.type === 'regex' && t.assignedBandwidthGroup.identifiers[0] === key))
-            ).length;
-        });
+        const workDays = calendarData.workDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+        const holidays = calendarData.holidays || [];
+        const durationMode = calendarData.durationMode || 'working';
 
-        console.log(`Global Bandwidth: ${currentGlobalBandwidth}, Global Occupancy (before new tasks): ${globalOccupancy}`);
-        Object.keys(currentGroupOccupancyMap).forEach(key => {
-            console.log(`  Group "${key}" Occupancy (before new tasks): ${currentGroupOccupancyMap[key]}`);
-        });
-        
-
-        // Identify tasks that are ready to run at the current `time` and sort
-        const potentialTasksToRun = queue
-            .filter(task => 
-                task.endTime === 0 && // Not yet scheduled
-                inDegree[task.name] === 0 && // All predecessors are done
-                task.earliestPossibleStartTime <= time // Task can start by 'time'
-            )
-            .sort((a, b) => b.resolvedDuration - a.resolvedDuration); // Prioritize longer tasks
-        console.log(`Potential tasks to start now: ${potentialTasksToRun.map(t => `${t.name} (eps: ${t.earliestPossibleStartTime})`).join(', ')}`);
-
-        const tasksStartedThisCycle = [];
-
-        // Iterate through potential tasks and try to schedule them
-        for (let i = 0; i < potentialTasksToRun.length; i++) {
-            const task = potentialTasksToRun[i]; // Get from sorted list
-            const taskScheduledData = scheduledTasks[task.name];
-            const group = taskScheduledData.assignedBandwidthGroup;
-
-            let canRun = false;
-            let debugReason = '';
-
-            // This is the CRITICAL LOGIC FIX for global + group bandwidths
-            if (group) { // Task is part of a specific group
-                const groupKey = group.type === 'list' ? group.identifiers.join(',') : group.identifiers[0];
-                const groupBandwidth = group.bandwidth === 'unbound' ? Infinity : group.bandwidth;
-                const currentThisGroupOccupancy = currentGroupOccupancyMap[groupKey] || 0;
-
-                // A group-assigned task consumes BOTH group capacity AND global capacity
-                if (currentThisGroupOccupancy < groupBandwidth && globalOccupancy < currentGlobalBandwidth) {
-                    canRun = true;
-                    currentGroupOccupancyMap[groupKey] = currentThisGroupOccupancy + 1; // Consume group slot
-                    globalOccupancy++; // Consume global slot
-                    debugReason = `Group capacity OK (${currentThisGroupOccupancy}/${groupBandwidth}), Global capacity OK (${globalOccupancy-1}/${currentGlobalBandwidth})`;
-                } else {
-                    if (currentThisGroupOccupancy >= groupBandwidth) debugReason = `Group capacity exhausted (${currentThisGroupOccupancy}/${groupBandwidth})`;
-                    else debugReason = `Global capacity exhausted (${globalOccupancy}/${currentGlobalBandwidth})`;
-                }
-            } else { // Task is not part of any specific group (only global bandwidth applies)
-                if (globalOccupancy < currentGlobalBandwidth) {
-                    canRun = true;
-                    globalOccupancy++; // Consume global slot
-                    debugReason = `Global capacity OK (${globalOccupancy-1}/${currentGlobalBandwidth})`;
-                } else {
-                    debugReason = `Global capacity exhausted (${globalOccupancy}/${currentGlobalBandwidth})`;
-                }
-            }
-            console.log(`  Attempting to schedule "${task.name}" (Group: ${group ? group.name || group.identifiers[0] : 'None'}). Can run: ${canRun}. Reason: ${debugReason}`);
-
-
-            if (canRun) {
-                taskScheduledData.startTime = time; // Start task at current time
-                taskScheduledData.endTime = taskScheduledData.startTime + task.resolvedDuration;
-                tasksStartedThisCycle.push(task.name);
-
-                runningTasks.push({
-                    taskName: task.name,
-                    endTime: taskScheduledData.endTime,
-                    assignedBandwidthGroup: group
-                });
-                // Remove task from `queue` since it's now running
-                const queueIndex = queue.indexOf(task);
-                if (queueIndex > -1) {
-                    queue.splice(queueIndex, 1);
-                }
-                console.log(`    --> Task "${task.name}" SCHEDULED! Start: ${taskScheduledData.startTime}, End: ${taskScheduledData.endTime}`);
-            }
-        }
-        console.log(`Tasks actually started this cycle: ${tasksStartedThisCycle.join(', ')}`);
-
-
-        // --- Time Advancement ---
-        if (runningTasks.length > 0) {
-            // Advance time to the earliest finish time among currently running tasks
-            const minEndTimeRunning = Math.min(...runningTasks.map(t => t.endTime));
-            // Ensure time only moves forward
-            time = Math.max(time, minEndTimeRunning);
-            console.log(`Advancing time to next task finish: ${time}`);
-        } else if (tasksStartedThisCycle.length === 0 && Object.values(scheduledTasks).some(t => t.endTime === 0)) {
-            // If no tasks started this cycle, but there are still unscheduled tasks,
-            // this implies waiting for earliestPossibleStartTime or a resource to free up.
-            // Find the next earliest possible start time among *ready* tasks, or simply advance by 1.
-            let nextAdvanceTime = time + 1; // Default to advancing by 1
-            const nextAvailableEps = Object.values(scheduledTasks)
-                .filter(t => t.endTime === 0 && inDegree[t.name] === 0 && t.earliestPossibleStartTime > time)
-                .map(t => t.earliestPossibleStartTime);
-            
-            if (nextAvailableEps.length > 0) {
-                nextAdvanceTime = Math.min(nextAdvanceTime, ...nextAvailableEps);
-            }
-            time = nextAdvanceTime;
-            console.log(`Advancing time to ${time} (no tasks started, or waiting for EPS).`);
+        if (durationMode === 'working') {
+            task.endDate = Calendar.addWorkingDays(task.startDate, task.resolvedDuration, workDays, holidays);
         } else {
-            // No running tasks, no tasks to start, and all unscheduled tasks are either blocked by inDegree
-            // or should have been caught earlier (e.g. deadlocks). Break the loop.
-            console.log(`No more tasks can be scheduled. Breaking loop.`);
-            break;
+            task.endDate = Calendar.addElapsedDays(task.startDate, task.resolvedDuration);
         }
-
-        console.log(`End of Cycle ${time} state: Running: ${runningTasks.map(t => t.name).join(', ')}. Queue: ${queue.map(t => t.name).join(', ')}. Remaining Unscheduled: ${Object.values(scheduledTasks).filter(t => t.endTime === 0).map(t => t.name).join(', ')}`);
-
-    } // End of while loop
-
-    // Final check for unscheduled tasks
-    Object.values(scheduledTasks).forEach(task => {
-        if (task.endTime === 0) {
-            errors.push({
-                message: `Scheduling error: Task "${task.name}" could not be scheduled. Possible deadlock or unreachable state.`,
-                type: 'error',
-                line: task.originalLineNum || 'N/A'
-            });
-        }
+        task.isScheduled = true;
+        scheduledTasksList.push(task);
     });
 
-    return { scheduledTasks: Object.values(scheduledTasks), errors };
+    return {
+        scheduledTasks: scheduledTasksList,
+        errors: errors
+    };
 }
