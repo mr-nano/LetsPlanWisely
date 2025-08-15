@@ -1,5 +1,3 @@
-// src/utils/dateHelpers.js
-
 /**
  * A static class for handling date and calendar-related calculations.
  * Encapsulates logic for working days, holidays, and adding durations.
@@ -13,7 +11,7 @@ class Calendar {
    * @returns {boolean} - True if the date is a working day, false otherwise.
    */
   static isWorkingDay(date, workDays) {
-    const dayOfWeek = date.toLocaleString('en-US', { weekday: 'short' });
+    const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'UTC' }).format(date);
     return workDays.includes(dayOfWeek);
   }
 
@@ -28,7 +26,7 @@ class Calendar {
     return holidays.includes(dateString);
   }
 
-/**
+  /**
    * Adds a specified number of working days to a start date, skipping weekends and holidays.
    * @param {Date} startDate - The initial date.
    * @param {number} days - The number of working days to add.
@@ -37,14 +35,29 @@ class Calendar {
    * @returns {Date} - The calculated end date.
    */
   static addWorkingDays(startDate, days, workDays, holidays) {
-    const resultDate = new Date(startDate);
+    if (days < 0) {
+      throw new Error("Cannot add a negative number of working days.");
+    }
+    
+    let resultDate = new Date(startDate);
     let daysAdded = 0;
 
+    // A task of 0 days should end on the start date
+    if (days === 0) {
+      return startDate;
+    }
+    
+    // Increment the date, checking if each day is a valid working day
     while (daysAdded < days) {
-      resultDate.setUTCDate(resultDate.getUTCDate() + 1); // Use UTC method
-      if (this.isWorkingDay(resultDate, workDays) && !this.isHoliday(resultDate, holidays)) {
-        daysAdded++;
-      }
+        if (Calendar.isWorkingDay(resultDate, workDays) && !Calendar.isHoliday(resultDate, holidays)) {
+            daysAdded++;
+        }
+        
+        // Only increment the date if more days need to be added. This handles
+        // the case where the start date is the last working day needed.
+        if (daysAdded < days) {
+            resultDate.setUTCDate(resultDate.getUTCDate() + 1);
+        }
     }
 
     return resultDate;
@@ -58,7 +71,7 @@ class Calendar {
    */
   static addElapsedDays(startDate, days) {
     const resultDate = new Date(startDate);
-    resultDate.setUTCDate(resultDate.getUTCDate() + days); // Use UTC method
+    resultDate.setUTCDate(resultDate.getUTCDate() + days);
     return resultDate;
   }
 }

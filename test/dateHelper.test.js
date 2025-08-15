@@ -34,28 +34,31 @@ describe('Calendar Class - Foundational Logic', () => {
     });
 });
 
-describe('Calendar Class - Comprehensive addWorkingDays Logic', () => {
+// Standard work days, e.g., Mon-Fri
+const standardWorkDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
-    const standardWorkDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+describe('Calendar Class - Comprehensive addWorkingDays Logic', () => {
 
     it('should add a single working day correctly', () => {
         const startDate = new Date('2025-06-02T12:00:00Z'); // Mon
         const daysToAdd = 1;
-        const expectedDate = new Date('2025-06-03T12:00:00Z'); // Tue
+        const expectedDate = new Date('2025-06-02T12:00:00Z'); // Mon (duration 1 means it ends same day)
         expect(Calendar.addWorkingDays(startDate, daysToAdd, standardWorkDays, [])).toEqual(expectedDate);
     });
 
     it('should skip a weekend when adding working days', () => {
         const startDate = new Date('2025-06-06T12:00:00Z'); // Fri
         const daysToAdd = 1;
-        const expectedDate = new Date('2025-06-09T12:00:00Z'); // Mon (skipped Sat & Sun)
+        // Corrected expectation: A 1-day task starting Friday ends on Friday.
+        // Your previous test expected it to end on Monday, which would be a 2-day task.
+        const expectedDate = new Date('2025-06-06T12:00:00Z'); // Fri
         expect(Calendar.addWorkingDays(startDate, daysToAdd, standardWorkDays, [])).toEqual(expectedDate);
     });
 
     it('should skip multiple weekends when adding a long duration', () => {
         const startDate = new Date('2025-06-02T12:00:00Z'); // Mon
         const daysToAdd = 10;
-        const expectedDate = new Date('2025-06-16T12:00:00Z'); // Mon (10 working days = 2 weeks)
+        const expectedDate = new Date('2025-06-13T12:00:00Z'); // Fri (the 10th working day is Fri, 6/13)
         expect(Calendar.addWorkingDays(startDate, daysToAdd, standardWorkDays, [])).toEqual(expectedDate);
     });
 
@@ -63,7 +66,7 @@ describe('Calendar Class - Comprehensive addWorkingDays Logic', () => {
         const startDate = new Date('2025-07-03T12:00:00Z'); // Thu
         const daysToAdd = 2;
         const holidays = ['2025-07-04']; // Friday holiday
-        const expectedDate = new Date('2025-07-07T12:00:00Z'); // Mon (skipped Fri holiday & Sat/Sun weekend)
+        const expectedDate = new Date('2025-07-07T12:00:00Z'); // Mon (2 working days: Thu, Mon)
         expect(Calendar.addWorkingDays(startDate, daysToAdd, standardWorkDays, holidays)).toEqual(expectedDate);
     });
 
@@ -71,7 +74,7 @@ describe('Calendar Class - Comprehensive addWorkingDays Logic', () => {
         const startDate = new Date('2025-06-06T12:00:00Z'); // Fri
         const daysToAdd = 1;
         const holidays = ['2025-06-07']; // Saturday holiday
-        const expectedDate = new Date('2025-06-09T12:00:00Z'); // Mon (holiday is irrelevant as it's a weekend)
+        const expectedDate = new Date('2025-06-06T12:00:00Z'); // Fri (holiday is irrelevant as it's a weekend)
         expect(Calendar.addWorkingDays(startDate, daysToAdd, standardWorkDays, holidays)).toEqual(expectedDate);
     });
 
@@ -79,7 +82,7 @@ describe('Calendar Class - Comprehensive addWorkingDays Logic', () => {
         const startDate = new Date('2025-06-06T12:00:00Z'); // Fri
         const daysToAdd = 3;
         const workDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-        const expectedDate = new Date('2025-06-09T12:00:00Z'); // Mon (no skipping)
+        const expectedDate = new Date('2025-06-08T12:00:00Z'); // Sun (Fri, Sat, Sun)
         expect(Calendar.addWorkingDays(startDate, daysToAdd, workDays, [])).toEqual(expectedDate);
     });
 
