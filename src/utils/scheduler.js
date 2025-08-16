@@ -149,7 +149,7 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
     if (hasFatalErrors) {
         return { scheduledTasks: Object.values(scheduledTasks), errors };
     }
-    
+
     // New: Check if calendarData is present. If not, use the old scheduling logic.
     if (!calendarData || !calendarData.startDate) {
         // --- Fallback to Old Time-Unit Scheduling Logic ---
@@ -172,7 +172,7 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
             // Update in-degrees for newly finished tasks
             const newlyFinishedTasks = runningTasks.filter(task => task.endTime <= time);
             runningTasks = runningTasks.filter(task => task.endTime > time);
-            
+
             if (newlyFinishedTasks.length > 0) {
                 newlyFinishedTasks.forEach(finishedTask => {
                     graph[finishedTask.taskName].forEach(dependentTaskName => {
@@ -190,17 +190,17 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
 
             const currentGlobalBandwidth = globalBandwidth === 'unbound' ? Infinity : globalBandwidth;
             let globalOccupancy = runningTasks.filter(t => !t.assignedBandwidthGroup).length;
-            
-            const currentGroupOccupancyMap = {}; 
+
+            const currentGroupOccupancyMap = {};
             processedTaskGroups.forEach(group => {
                 const key = group.type === 'list' ? group.identifiers.join(',') : group.identifiers[0];
                 currentGroupOccupancyMap[key] = runningTasks.filter(t =>
                     t.assignedBandwidthGroup &&
                     ((t.assignedBandwidthGroup.type === 'list' && group.type === 'list' && t.assignedBandwidthGroup.identifiers.join(',') === key) ||
-                    (t.assignedBandwidthGroup.type === 'regex' && group.type === 'regex' && t.assignedBandwidthGroup.regex.test(t.taskName)))
+                        (t.assignedBandwidthGroup.type === 'regex' && group.type === 'regex' && t.assignedBandwidthGroup.regex.test(t.taskName)))
                 ).length;
             });
-            
+
             const potentialTasksToRun = queue
                 .filter(task =>
                     task.endTime === 0 &&
@@ -214,9 +214,9 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
             for (let i = 0; i < potentialTasksToRun.length; i++) {
                 const task = potentialTasksToRun[i];
                 const taskScheduledData = scheduledTasks[task.name];
-                
+
                 // Re-assign group since it's not done initially in this old logic branch
-                const taskGroup = processedTaskGroups.find(group => 
+                const taskGroup = processedTaskGroups.find(group =>
                     (group.type === 'list' && group.identifiers.includes(task.name)) ||
                     (group.type === 'regex' && group.regex.test(task.name))
                 );
@@ -224,7 +224,7 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
 
                 let canRun = false;
                 const group = taskScheduledData.assignedBandwidthGroup;
-                
+
                 if (group) {
                     const groupKey = group.type === 'list' ? group.identifiers.join(',') : group.identifiers[0];
                     const groupBandwidth = group.bandwidth === 'unbound' ? Infinity : group.bandwidth;
@@ -265,7 +265,7 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
                 const nextAvailableEps = Object.values(scheduledTasks)
                     .filter(t => t.endTime === 0 && inDegree[t.name] === 0 && t.earliestPossibleStartTime > time)
                     .map(t => t.earliestPossibleStartTime);
-                
+
                 if (nextAvailableEps.length > 0) {
                     nextAdvanceTime = Math.min(nextAdvanceTime, ...nextAvailableEps);
                 }
@@ -287,10 +287,10 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
 
         return { scheduledTasks: Object.values(scheduledTasks), errors };
     }
-    
+
     // --- New Date-Aware Scheduling Logic (Only runs if calendarData is present) ---
     Array.from(taskMap.values()).forEach(task => {
-        const taskGroup = processedTaskGroups.find(group => 
+        const taskGroup = processedTaskGroups.find(group =>
             (group.type === 'list' && group.identifiers.includes(task.name)) ||
             (group.type === 'regex' && group.regex.test(task.name))
         );
@@ -309,18 +309,36 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
         };
     });
 
+    // This code is new:
+    const workDays = calendarData.workDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    const holidays = calendarData.holidays || [];
+
+    // New: Function to find the next valid working day
+    function findNextWorkingDay(date) {
+        let newDate = new Date(date);
+        while (!Calendar.isWorkingDay(newDate, workDays) || Calendar.isHoliday(newDate, holidays)) {
+            newDate.setUTCDate(newDate.getUTCDate() + 1);
+        }
+        return newDate;
+    }
+
     const queue = Object.values(scheduledTasks).filter(t => inDegree[t.name] === 0);
     const scheduledTasksList = [];
 
     // Simple scheduling loop for date-aware logic (will be expanded later)
     queue.forEach(task => {
         if (!task.startDate) {
-             task.startDate = calendarData.startDate;
+            task.startDate = calendarData.startDate;
         }
 
         const workDays = calendarData.workDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
         const holidays = calendarData.holidays || [];
         const durationMode = calendarData.durationMode || 'working';
+
+        // New: Check and adjust the task's start date to the next valid working day
+        // This is the CRITICAL change to fix the logical flaw
+        task.startDate = findNextWorkingDay(task.startDate);
+
 
         if (durationMode === 'working') {
             task.endDate = Calendar.addWorkingDays(task.startDate, task.resolvedDuration, workDays, holidays);
