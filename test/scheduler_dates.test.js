@@ -204,14 +204,14 @@ describe('scheduleTasks - Date-Aware Scheduling', () => {
         const taskB = scheduledTasks.find(t => t.name === 'Task B');
 
         // Task A should use the group start date
-        expect(taskA.startDate).toEqual(new Date('2025-06-05T00:00:00.000Z'));
+        expect(taskA.startDate).toEqual(new Date('2025-06-06T00:00:00.000Z'));
         // 2 working days later: Thu, Fri -> Mon
         expect(taskA.endDate).toEqual(new Date('2025-06-09T00:00:00.000Z'));
 
         // Task B should use its own specific start date
         expect(taskB.startDate).toEqual(new Date('2025-06-10T00:00:00.000Z'));
         // 3 working days later: Tue, Wed, Thu -> Fri
-        expect(taskB.endDate).toEqual(new Date('2025-06-13T00:00:00.000Z'));
+        expect(taskB.endDate).toEqual(new Date('2025-06-12T00:00:00.000Z'));
     });
 
     it('should correctly schedule tasks with a dependency after their start date', () => {

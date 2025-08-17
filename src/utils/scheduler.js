@@ -150,6 +150,12 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
         return { scheduledTasks: Object.values(scheduledTasks), errors };
     }
 
+    // Add these two log statements
+    console.log('--- Scheduler Start ---');
+    console.log('Received calendarData:', calendarData);
+    const isDateAwareMode = !!calendarData && !!calendarData.startDate;
+    console.log('isDateAwareMode:', isDateAwareMode);
+
     // New: Check if calendarData is present. If not, use the old scheduling logic.
     if (!calendarData || !calendarData.startDate) {
         // --- Fallback to Old Time-Unit Scheduling Logic ---
@@ -290,11 +296,25 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
 
     // --- New Date-Aware Scheduling Logic (Only runs if calendarData is present) ---
     Array.from(taskMap.values()).forEach(task => {
+
+        // Log the current task name
+        console.log(`\n--- Processing Task: ${task.name} ---`);
+
+        // Log the task's explicit start date from the input
+        console.log(`Task's explicit start date:`, task.startDate);
+
         const taskGroup = processedTaskGroups.find(group =>
             (group.type === 'list' && group.identifiers.includes(task.name)) ||
             (group.type === 'regex' && group.regex.test(task.name))
         );
+
+        // Log the start date from the found group
+        console.log(`Group start date found:`, taskGroup ? taskGroup.startDate : 'N/A');
+
         const taskStartDate = task.startDate || (taskGroup ? taskGroup.startDate : null) || (calendarData ? calendarData.startDate : null);
+
+        // Log the final resolved start date before it's assigned
+        console.log(`Resolved start date:`, taskStartDate);
 
         scheduledTasks[task.name] = {
             ...task,
@@ -335,10 +355,18 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
         const holidays = calendarData.holidays || [];
         const durationMode = calendarData.durationMode || 'working';
 
+        // Log the date before adjustment
+        console.log(`Before adjustment, task.startDate: ${task.startDate.toISOString()}`);
+
         // New: Check and adjust the task's start date to the next valid working day
         // This is the CRITICAL change to fix the logical flaw
-        task.startDate = findNextWorkingDay(task.startDate);
+        const adjustedStartDate = findNextWorkingDay(task.startDate);
 
+        // Log the date after adjustment
+        console.log(`After adjustment, adjustedStartDate: ${adjustedStartDate.toISOString()}`);
+
+        // This is the line that needs fixing
+        scheduledTasks[task.name].startDate = adjustedStartDate;
 
         if (durationMode === 'working') {
             task.endDate = Calendar.addWorkingDays(task.startDate, task.resolvedDuration, workDays, holidays);
