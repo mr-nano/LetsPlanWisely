@@ -332,6 +332,7 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
     // This code is new:
     const workDays = calendarData.workDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
     const holidays = calendarData.holidays || [];
+    const durationMode = calendarData.durationMode || 'working';
 
     // New: Function to find the next valid working day
     function findNextWorkingDay(date) {
@@ -342,39 +343,78 @@ export function scheduleTasks(tasks, dependencies, globalBandwidth, taskGroups, 
         return newDate;
     }
 
+    // New: Topological sort-based scheduling loop for date-aware logic
     const queue = Object.values(scheduledTasks).filter(t => inDegree[t.name] === 0);
     const scheduledTasksList = [];
 
-    // Simple scheduling loop for date-aware logic (will be expanded later)
-    queue.forEach(task => {
-        if (!task.startDate) {
-            task.startDate = calendarData.startDate;
+    while (queue.length > 0) {
+        const task = queue.shift(); // Dequeue the next task to schedule
+
+        // Determine the task's start date
+        let resolvedStartDate = task.startDate ? new Date(task.startDate) : new Date(calendarData.startDate);
+        console.log(`Task "${task.name}": Initial resolvedStartDate from source: ${resolvedStartDate}`);
+
+
+        // Check for predecessors and adjust the start date if necessary
+        if (task.predecessors.length > 0) {
+            task.predecessors.forEach(predecessorName => {
+                const predecessorEndDate = scheduledTasks[predecessorName].endDate;
+                console.log(`  Task "${task.name}": Predecessor "${predecessorName}" endDate: ${predecessorEndDate.toISOString()}`);
+                if (predecessorEndDate) {
+                    // The successor must start on the day *after* the predecessor finishes.
+                    const dayAfterPredecessor = new Date(predecessorEndDate);
+                    dayAfterPredecessor.setUTCDate(dayAfterPredecessor.getUTCDate() + 1);
+
+                    console.log(`  Task "${task.name}": Day after predecessor ends: ${dayAfterPredecessor.toISOString()}`);
+
+                    // Take the later of the explicit start date and the day after the predecessor
+                    if (dayAfterPredecessor > resolvedStartDate) {
+                        resolvedStartDate = dayAfterPredecessor;
+                        console.log(`  Task "${task.name}": Adjusted resolvedStartDate based on dependency to: ${resolvedStartDate.toISOString()}`);
+                    }
+                }
+            });
         }
 
-        const workDays = calendarData.workDays || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-        const holidays = calendarData.holidays || [];
-        const durationMode = calendarData.durationMode || 'working';
+        
+        // Now, after considering all dependencies, find the next valid working day.
+        // This is the final start date for the task.
+        const finalStartDate = findNextWorkingDay(resolvedStartDate);
+        task.startDate = finalStartDate;
+        console.log(`Task "${task.name}": Final adjustedStartDate (next working day): ${task.startDate.toISOString()}`);
 
-        // Log the date before adjustment
-        console.log(`Before adjustment, task.startDate: ${task.startDate.toISOString()}`);
 
-        // New: Check and adjust the task's start date to the next valid working day
-        // This is the CRITICAL change to fix the logical flaw
-        const adjustedStartDate = findNextWorkingDay(task.startDate);
-
-        // Log the date after adjustment
-        console.log(`After adjustment, adjustedStartDate: ${adjustedStartDate.toISOString()}`);
-
-        // This is the line that needs fixing
-        scheduledTasks[task.name].startDate = adjustedStartDate;
-
+        // Calculate the end date based on the adjusted start date
         if (durationMode === 'working') {
             task.endDate = Calendar.addWorkingDays(task.startDate, task.resolvedDuration, workDays, holidays);
         } else {
             task.endDate = Calendar.addElapsedDays(task.startDate, task.resolvedDuration);
         }
+        console.log(`Task "${task.name}": Calculated endDate: ${task.endDate}`);
+
+
         task.isScheduled = true;
         scheduledTasksList.push(task);
+
+        // Process dependents and add them to the queue if ready
+        graph[task.name].forEach(dependentTaskName => {
+            inDegree[dependentTaskName]--;
+            if (inDegree[dependentTaskName] === 0) {
+                // Dependency met, add to queue
+                queue.push(scheduledTasks[dependentTaskName]);
+            }
+        });
+    }
+
+    // Final check for unscheduled tasks (circular dependencies)
+    Object.values(scheduledTasks).forEach(task => {
+        if (!task.isScheduled) {
+            errors.push({
+                message: `Scheduling error: Task "${task.name}" could not be scheduled. Possible circular dependency.`,
+                type: 'error',
+                line: task.originalLineNum || 'N/A'
+            });
+        }
     });
 
     return {
